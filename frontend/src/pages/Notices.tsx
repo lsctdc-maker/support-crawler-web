@@ -27,6 +27,14 @@ const saveExcludedUrls = (urls: Set<string>) => {
   }
 };
 
+// 관련도 점수 가져오기 (AI 점수 우선)
+const getRelevanceScore = (notice: Notice): number => {
+  if (notice.llm_score !== null && notice.llm_score !== undefined) {
+    return notice.llm_score;
+  }
+  return notice.relevance || 0;
+};
+
 export default function Notices() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [excludedUrls, setExcludedUrls] = useState<Set<string>>(loadExcludedUrls);
@@ -36,6 +44,9 @@ export default function Notices() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [hideExcluded, setHideExcluded] = useState(true);
+  const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
+  const [minRelevance, setMinRelevance] = useState(5); // 최소 관련도
+  const [sortBy, setSortBy] = useState<'relevance' | 'date'>('relevance');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
   const fetchNotices = useCallback(async () => {
@@ -45,7 +56,9 @@ export default function Notices() {
         source: source || undefined,
         search: search || undefined,
         page,
-        size: 20,
+        size: 50, // 더 많이 가져와서 클라이언트에서 필터링
+        minRelevance: hideLowRelevance ? minRelevance : 0,
+        sortBy,
       });
       setNotices(data.items);
       setTotal(data.total);
@@ -54,7 +67,7 @@ export default function Notices() {
     } finally {
       setLoading(false);
     }
-  }, [source, search, page]);
+  }, [source, search, page, hideLowRelevance, minRelevance, sortBy]);
 
   const fetchLastCrawl = useCallback(async () => {
     try {
@@ -91,11 +104,13 @@ export default function Notices() {
 
   const isExcluded = (url: string) => excludedUrls.has(url);
 
-  const displayNotices = hideExcluded
-    ? notices.filter(n => !isExcluded(n.url))
-    : notices;
+  // 필터링된 공고 목록
+  const displayNotices = notices.filter(n => {
+    if (hideExcluded && isExcluded(n.url)) return false;
+    return true;
+  });
 
-  const totalPages = Math.ceil(total / 20);
+  const totalPages = Math.ceil(total / 50);
 
   const formatDate = (dateStr: string) => {
     try {
@@ -109,6 +124,14 @@ export default function Notices() {
     } catch {
       return dateStr;
     }
+  };
+
+  // 관련도에 따른 배경색
+  const getScoreBgColor = (score: number) => {
+    if (score >= 8) return 'bg-green-100 text-green-800';
+    if (score >= 6) return 'bg-blue-100 text-blue-800';
+    if (score >= 4) return 'bg-yellow-100 text-yellow-800';
+    return 'bg-gray-100 text-gray-600';
   };
 
   return (
@@ -131,6 +154,7 @@ export default function Notices() {
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="bg-white rounded-lg shadow p-4 mb-4">
           <div className="flex flex-wrap gap-4 items-center">
+            {/* 소스 필터 */}
             <select
               value={source}
               onChange={(e) => { setSource(e.target.value); setPage(1); }}
@@ -141,6 +165,30 @@ export default function Notices() {
               <option value="agency">기관별</option>
               <option value="g2b">나라장터</option>
             </select>
+
+            {/* 정렬 */}
+            <select
+              value={sortBy}
+              onChange={(e) => { setSortBy(e.target.value as 'relevance' | 'date'); setPage(1); }}
+              className="border rounded px-3 py-2"
+            >
+              <option value="relevance">관련도순</option>
+              <option value="date">최신순</option>
+            </select>
+
+            {/* 최소 관련도 */}
+            <select
+              value={minRelevance}
+              onChange={(e) => { setMinRelevance(Number(e.target.value)); setPage(1); }}
+              className="border rounded px-3 py-2"
+              disabled={!hideLowRelevance}
+            >
+              <option value="3">3점 이상</option>
+              <option value="5">5점 이상</option>
+              <option value="7">7점 이상</option>
+            </select>
+
+            {/* 검색 */}
             <input
               type="text"
               placeholder="제목 검색..."
@@ -155,11 +203,25 @@ export default function Notices() {
             >
               검색
             </button>
-            <label className="flex items-center gap-2 text-sm">
+          </div>
+
+          {/* 체크박스 필터 */}
+          <div className="flex flex-wrap gap-6 mt-3 pt-3 border-t">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={hideLowRelevance}
+                onChange={(e) => { setHideLowRelevance(e.target.checked); setPage(1); }}
+                className="w-4 h-4"
+              />
+              낮은 관련도 숨기기
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
                 checked={hideExcluded}
                 onChange={(e) => setHideExcluded(e.target.checked)}
+                className="w-4 h-4"
               />
               관심없음 숨기기
             </label>
@@ -183,81 +245,90 @@ export default function Notices() {
             <div className="p-8 text-center text-gray-500">
               {total === 0
                 ? '공고가 없습니다.'
-                : hideExcluded
-                ? '모든 공고가 관심없음 처리되었습니다. 체크박스를 해제하여 확인하세요.'
-                : '필터에 맞는 공고가 없습니다.'}
+                : '필터 조건에 맞는 공고가 없습니다. 필터를 조정해보세요.'}
             </div>
           ) : (
             <div className="divide-y">
-              {displayNotices.map((notice) => (
-                <div
-                  key={notice.id}
-                  className={`p-4 hover:bg-gray-50 ${isExcluded(notice.url) ? 'bg-gray-100 opacity-60' : ''}`}
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <a
-                        href={notice.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline font-medium"
-                      >
-                        {notice.title}
-                      </a>
-                      <div className="text-sm text-gray-500 mt-1 flex flex-wrap gap-2">
-                        <span>{notice.agency}</span>
-                        <span>{notice.date}</span>
-                        <span className="px-2 py-0.5 bg-gray-100 rounded text-xs">
-                          {notice.source}
-                        </span>
-                        {notice.llm_score !== null && notice.llm_score !== undefined ? (
-                          <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
-                            AI {notice.llm_score}점
+              {displayNotices.map((notice) => {
+                const score = getRelevanceScore(notice);
+                const hasAiScore = notice.llm_score !== null && notice.llm_score !== undefined;
+
+                return (
+                  <div
+                    key={notice.id}
+                    className={`p-4 hover:bg-gray-50 ${isExcluded(notice.url) ? 'bg-gray-100 opacity-60' : ''}`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        {/* 제목 + 점수 */}
+                        <div className="flex items-start gap-3">
+                          <span className={`px-2 py-1 rounded text-sm font-bold ${getScoreBgColor(score)}`}>
+                            {hasAiScore ? `AI ${score}` : score}점
                           </span>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
-                            관련도 {notice.relevance}
+                          <a
+                            href={notice.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline font-medium flex-1"
+                          >
+                            {notice.title}
+                          </a>
+                        </div>
+
+                        {/* 메타 정보 */}
+                        <div className="text-sm text-gray-500 mt-2 ml-12 flex flex-wrap gap-2">
+                          <span>{notice.agency}</span>
+                          <span>•</span>
+                          <span>{notice.date}</span>
+                          <span className="px-2 py-0.5 bg-gray-100 rounded text-xs">
+                            {notice.source}
                           </span>
+                          {isExcluded(notice.url) && (
+                            <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">
+                              관심없음
+                            </span>
+                          )}
+                        </div>
+
+                        {/* AI 판단 이유 */}
+                        {notice.llm_reason && (
+                          <p className="text-sm text-purple-600 mt-2 ml-12 bg-purple-50 p-2 rounded">
+                            AI: {notice.llm_reason}
+                          </p>
                         )}
-                        {isExcluded(notice.url) && (
-                          <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">
-                            관심없음
-                          </span>
+
+                        {/* 요약 */}
+                        {notice.summary && (
+                          <p className="text-sm text-gray-600 mt-2 ml-12 bg-gray-50 p-2 rounded">
+                            {notice.summary}
+                          </p>
                         )}
                       </div>
-                      {notice.llm_reason && (
-                        <p className="text-xs text-purple-600 mt-1">
-                          AI: {notice.llm_reason}
-                        </p>
-                      )}
-                      {notice.summary && (
-                        <p className="text-sm text-gray-600 mt-2 bg-gray-50 p-2 rounded">
-                          {notice.summary}
-                        </p>
-                      )}
-                    </div>
-                    <div className="ml-4">
-                      {isExcluded(notice.url) ? (
-                        <button
-                          onClick={() => handleRestore(notice)}
-                          className="text-blue-500 hover:text-blue-700 text-sm px-2 py-1 border border-blue-300 rounded"
-                          title="관심없음 해제"
-                        >
-                          복원
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleExclude(notice)}
-                          className="text-gray-400 hover:text-red-500 text-sm"
-                          title="관심없음"
-                        >
-                          X
-                        </button>
-                      )}
+
+                      {/* 액션 버튼 */}
+                      <div className="ml-4">
+                        {isExcluded(notice.url) ? (
+                          <button
+                            onClick={() => handleRestore(notice)}
+                            className="text-blue-500 hover:text-blue-700 text-sm px-2 py-1 border border-blue-300 rounded"
+                            title="관심없음 해제"
+                          >
+                            복원
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleExclude(notice)}
+                            className="text-gray-400 hover:text-red-500 text-sm"
+                            title="관심없음"
+                          >
+                            X
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -286,7 +357,7 @@ export default function Notices() {
         </div>
 
         <div className="text-sm text-gray-500 mt-2">
-          총 {total}건 {hideExcluded && excludedUrls.size > 0 && `(${excludedUrls.size}건 숨김)`}
+          총 {total}건 표시 {excludedUrls.size > 0 && `(${excludedUrls.size}건 관심없음)`}
         </div>
       </div>
     </div>
