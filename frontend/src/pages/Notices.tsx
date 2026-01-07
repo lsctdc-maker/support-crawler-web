@@ -35,6 +35,13 @@ const getRelevanceScore = (notice: Notice): number => {
   return notice.relevance || 0;
 };
 
+// HTML 태그 제거
+const stripHtml = (html: string): string => {
+  if (!html) return '';
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return doc.body.textContent || '';
+};
+
 export default function Notices() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [excludedUrls, setExcludedUrls] = useState<Set<string>>(loadExcludedUrls);
@@ -45,19 +52,42 @@ export default function Notices() {
   const [loading, setLoading] = useState(false);
   const [hideExcluded, setHideExcluded] = useState(true);
   const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
-  const [minRelevance, setMinRelevance] = useState(5); // 최소 관련도
+  const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'mid7' | 'mid' | 'low'>('mid7'); // 점수 필터 (기본: 7점 이상)
   const [sortBy, setSortBy] = useState<'relevance' | 'date'>('relevance');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
+
+  // AI 요약 관련 상태
+  const [summaryNotice, setSummaryNotice] = useState<Notice | null>(null);
+  const [summaryContent, setSummaryContent] = useState<string>('');
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
     try {
+      // 점수 필터에 따른 최소 관련도 설정
+      let minRelevance = 0;
+      let maxRelevance = 10;
+      if (hideLowRelevance) {
+        if (scoreFilter === 'high') {
+          minRelevance = 8;
+        } else if (scoreFilter === 'mid7') {
+          minRelevance = 7;  // 7점 이상
+        } else if (scoreFilter === 'mid') {
+          minRelevance = 5;
+          maxRelevance = 6;
+        } else if (scoreFilter === 'low') {
+          minRelevance = 0;
+          maxRelevance = 4;
+        }
+      }
+
       const data = await noticeApi.getList({
         source: source || undefined,
         search: search || undefined,
         page,
-        size: 50, // 더 많이 가져와서 클라이언트에서 필터링
-        minRelevance: hideLowRelevance ? minRelevance : 0,
+        size: 50,
+        minRelevance,
+        maxRelevance: maxRelevance < 10 ? maxRelevance : undefined,
         sortBy,
       });
       setNotices(data.items);
@@ -67,7 +97,7 @@ export default function Notices() {
     } finally {
       setLoading(false);
     }
-  }, [source, search, page, hideLowRelevance, minRelevance, sortBy]);
+  }, [source, search, page, hideLowRelevance, scoreFilter, sortBy]);
 
   const fetchLastCrawl = useCallback(async () => {
     try {
@@ -104,6 +134,36 @@ export default function Notices() {
 
   const isExcluded = (url: string) => excludedUrls.has(url);
 
+  // AI 요약 생성
+  const handleSummarize = async (notice: Notice) => {
+    setSummaryNotice(notice);
+    setSummaryContent('');
+    setSummaryLoading(true);
+
+    try {
+      const response = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noticeId: notice.id, url: notice.url, title: notice.title, agency: notice.agency }),
+      });
+
+      if (!response.ok) throw new Error('요약 생성 실패');
+
+      const data = await response.json();
+      setSummaryContent(data.summary);
+    } catch (err) {
+      console.error('요약 생성 실패:', err);
+      setSummaryContent('요약을 생성할 수 없습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const closeSummaryModal = () => {
+    setSummaryNotice(null);
+    setSummaryContent('');
+  };
+
   // 필터링된 공고 목록
   const displayNotices = notices.filter(n => {
     if (hideExcluded && isExcluded(n.url)) return false;
@@ -116,6 +176,7 @@ export default function Notices() {
     try {
       const date = new Date(dateStr);
       return date.toLocaleString('ko-KR', {
+        timeZone: 'Asia/Seoul',
         month: 'numeric',
         day: 'numeric',
         hour: '2-digit',
@@ -153,56 +214,69 @@ export default function Notices() {
       {/* 필터 */}
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="bg-white rounded-lg shadow p-4 mb-4">
-          <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex flex-wrap gap-3 items-center">
             {/* 소스 필터 */}
-            <select
-              value={source}
-              onChange={(e) => { setSource(e.target.value); setPage(1); }}
-              className="border rounded px-3 py-2"
-            >
-              <option value="">전체 소스</option>
-              <option value="bizinfo">기업마당</option>
-              <option value="agency">기관별</option>
-              <option value="g2b">나라장터</option>
-            </select>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-gray-500">소스:</span>
+              <select
+                value={source}
+                onChange={(e) => { setSource(e.target.value); setPage(1); }}
+                className="border rounded px-3 py-2 text-sm"
+              >
+                <option value="">전체</option>
+                <option value="bizinfo">기업마당</option>
+                <option value="agency">기관별</option>
+                <option value="g2b">나라장터</option>
+              </select>
+            </div>
 
             {/* 정렬 */}
-            <select
-              value={sortBy}
-              onChange={(e) => { setSortBy(e.target.value as 'relevance' | 'date'); setPage(1); }}
-              className="border rounded px-3 py-2"
-            >
-              <option value="relevance">관련도순</option>
-              <option value="date">최신순</option>
-            </select>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-gray-500">정렬:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => { setSortBy(e.target.value as 'relevance' | 'date'); setPage(1); }}
+                className="border rounded px-3 py-2 text-sm"
+              >
+                <option value="relevance">관련도순</option>
+                <option value="date">최신순</option>
+              </select>
+            </div>
 
-            {/* 최소 관련도 */}
-            <select
-              value={minRelevance}
-              onChange={(e) => { setMinRelevance(Number(e.target.value)); setPage(1); }}
-              className="border rounded px-3 py-2"
-              disabled={!hideLowRelevance}
-            >
-              <option value="3">3점 이상</option>
-              <option value="5">5점 이상</option>
-              <option value="7">7점 이상</option>
-            </select>
+            {/* 점수 필터 */}
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-gray-500">점수:</span>
+              <select
+                value={scoreFilter}
+                onChange={(e) => { setScoreFilter(e.target.value as 'all' | 'high' | 'mid7' | 'mid' | 'low'); setPage(1); }}
+                className="border rounded px-3 py-2 text-sm"
+                disabled={!hideLowRelevance}
+              >
+                <option value="all">전체</option>
+                <option value="high">8점 이상 (추천)</option>
+                <option value="mid7">7점 이상</option>
+                <option value="mid">5~6점</option>
+                <option value="low">4점 이하</option>
+              </select>
+            </div>
 
             {/* 검색 */}
-            <input
-              type="text"
-              placeholder="제목 검색..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && setPage(1)}
-              className="border rounded px-3 py-2 flex-1 min-w-[200px]"
-            />
-            <button
-              onClick={() => setPage(1)}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-            >
-              검색
-            </button>
+            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+              <input
+                type="text"
+                placeholder="제목 검색..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && setPage(1)}
+                className="border rounded px-3 py-2 text-sm flex-1"
+              />
+              <button
+                onClick={() => setPage(1)}
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+              >
+                검색
+              </button>
+            </div>
           </div>
 
           {/* 체크박스 필터 */}
@@ -290,27 +364,42 @@ export default function Notices() {
                           )}
                         </div>
 
-                        {/* AI 판단 이유 */}
-                        {notice.llm_reason && (
+                        {/* 8점 이상: 추천 공고 한줄 요약 (강조) */}
+                        {score >= 8 && notice.llm_reason && (
+                          <p className="text-sm text-green-700 mt-2 ml-12 bg-green-50 border border-green-200 p-2 rounded font-medium">
+                            ⭐ 추천: {notice.llm_reason}
+                          </p>
+                        )}
+
+                        {/* 8점 미만: 일반 AI 판단 이유 */}
+                        {score < 8 && notice.llm_reason && (
                           <p className="text-sm text-purple-600 mt-2 ml-12 bg-purple-50 p-2 rounded">
                             AI: {notice.llm_reason}
                           </p>
                         )}
 
-                        {/* 요약 */}
+                        {/* 요약 (HTML 태그 제거) */}
                         {notice.summary && (
-                          <p className="text-sm text-gray-600 mt-2 ml-12 bg-gray-50 p-2 rounded">
-                            {notice.summary}
+                          <p className="text-sm text-gray-600 mt-2 ml-12 bg-gray-50 p-2 rounded line-clamp-3">
+                            {stripHtml(notice.summary)}
                           </p>
                         )}
                       </div>
 
                       {/* 액션 버튼 */}
-                      <div className="ml-4">
+                      <div className="ml-4 flex flex-col gap-1">
+                        {/* AI 요약 버튼 */}
+                        <button
+                          onClick={() => handleSummarize(notice)}
+                          className="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 border border-purple-300 rounded hover:bg-purple-50"
+                          title="AI 요약 보기"
+                        >
+                          AI 요약
+                        </button>
                         {isExcluded(notice.url) ? (
                           <button
                             onClick={() => handleRestore(notice)}
-                            className="text-blue-500 hover:text-blue-700 text-sm px-2 py-1 border border-blue-300 rounded"
+                            className="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 border border-blue-300 rounded"
                             title="관심없음 해제"
                           >
                             복원
@@ -318,10 +407,10 @@ export default function Notices() {
                         ) : (
                           <button
                             onClick={() => handleExclude(notice)}
-                            className="text-gray-400 hover:text-red-500 text-sm"
+                            className="text-gray-400 hover:text-red-500 text-xs px-2 py-1"
                             title="관심없음"
                           >
-                            X
+                            제외
                           </button>
                         )}
                       </div>
@@ -360,6 +449,60 @@ export default function Notices() {
           총 {total}건 표시 {excludedUrls.size > 0 && `(${excludedUrls.size}건 관심없음)`}
         </div>
       </div>
+
+      {/* AI 요약 모달 */}
+      {summaryNotice && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            {/* 모달 헤더 */}
+            <div className="p-4 border-b flex justify-between items-start">
+              <div>
+                <h3 className="font-bold text-lg text-gray-800">{summaryNotice.title}</h3>
+                <p className="text-sm text-gray-500 mt-1">{summaryNotice.agency}</p>
+              </div>
+              <button
+                onClick={closeSummaryModal}
+                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              {summaryLoading ? (
+                <div className="flex flex-col items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600 mb-4"></div>
+                  <p className="text-gray-500">AI가 공고를 분석하고 있습니다...</p>
+                  <p className="text-xs text-gray-400 mt-1">잠시만 기다려주세요</p>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {summaryContent}
+                </div>
+              )}
+            </div>
+
+            {/* 모달 푸터 */}
+            <div className="p-4 border-t flex justify-between items-center bg-gray-50">
+              <a
+                href={summaryNotice.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline text-sm"
+              >
+                원문 보기
+              </a>
+              <button
+                onClick={closeSummaryModal}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-sm"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

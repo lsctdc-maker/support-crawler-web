@@ -8,9 +8,10 @@ export const noticeApi = {
     page?: number;
     size?: number;
     minRelevance?: number;
+    maxRelevance?: number;
     sortBy?: 'relevance' | 'date';
   }) => {
-    const { source, search, page = 1, size = 20, minRelevance = 0, sortBy = 'relevance' } = params;
+    const { source, search, page = 1, size = 20, minRelevance = 0, maxRelevance, sortBy = 'relevance' } = params;
     const offset = (page - 1) * size;
 
     let query = supabase
@@ -45,9 +46,20 @@ export const noticeApi = {
       query = query.ilike('title', `%${search}%`);
     }
 
-    // 최소 관련도 필터
-    if (minRelevance > 0) {
-      query = query.or(`llm_score.gte.${minRelevance},relevance.gte.${minRelevance}`);
+    // 관련도 범위 필터
+    if (minRelevance > 0 && maxRelevance !== undefined) {
+      // 범위 필터 (예: 6~7점)
+      query = query.or(
+        `and(llm_score.gte.${minRelevance},llm_score.lte.${maxRelevance}),and(llm_score.is.null,relevance.gte.${minRelevance},relevance.lte.${maxRelevance})`
+      );
+    } else if (minRelevance > 0) {
+      // 최소 관련도만 필터
+      query = query.or(`llm_score.gte.${minRelevance},and(llm_score.is.null,relevance.gte.${minRelevance})`);
+    } else if (maxRelevance !== undefined) {
+      // 최대 관련도만 필터 (5점 이하)
+      query = query.or(
+        `llm_score.lte.${maxRelevance},and(llm_score.is.null,relevance.lte.${maxRelevance})`
+      );
     }
 
     const { data, count, error } = await query;
