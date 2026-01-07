@@ -1,14 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
-import { noticeApi, excludeApi, crawlApi } from '../services/api';
+import { noticeApi, crawlApi } from '../services/api';
 import { Notice, CrawlLog } from '../lib/supabase';
 
-interface NoticesProps {
-  onLogout: () => void;
-}
+// 로컬스토리지 키
+const EXCLUDED_URLS_KEY = 'excluded_notice_urls';
 
-export default function Notices({ onLogout }: NoticesProps) {
+// 로컬스토리지에서 제외 목록 로드
+const loadExcludedUrls = (): Set<string> => {
+  try {
+    const saved = localStorage.getItem(EXCLUDED_URLS_KEY);
+    if (saved) {
+      return new Set(JSON.parse(saved));
+    }
+  } catch (e) {
+    console.error('제외 목록 로드 실패:', e);
+  }
+  return new Set();
+};
+
+// 로컬스토리지에 제외 목록 저장
+const saveExcludedUrls = (urls: Set<string>) => {
+  try {
+    localStorage.setItem(EXCLUDED_URLS_KEY, JSON.stringify([...urls]));
+  } catch (e) {
+    console.error('제외 목록 저장 실패:', e);
+  }
+};
+
+export default function Notices() {
   const [notices, setNotices] = useState<Notice[]>([]);
-  const [excludedUrls, setExcludedUrls] = useState<Set<string>>(new Set());
+  const [excludedUrls, setExcludedUrls] = useState<Set<string>>(loadExcludedUrls);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [source, setSource] = useState('');
@@ -35,15 +56,6 @@ export default function Notices({ onLogout }: NoticesProps) {
     }
   }, [source, search, page]);
 
-  const fetchExcludedUrls = useCallback(async () => {
-    try {
-      const urls = await excludeApi.getExcludedUrls();
-      setExcludedUrls(urls);
-    } catch (err) {
-      console.error('제외 목록 조회 실패:', err);
-    }
-  }, []);
-
   const fetchLastCrawl = useCallback(async () => {
     try {
       const logs = await crawlApi.getLogs(1);
@@ -57,30 +69,24 @@ export default function Notices({ onLogout }: NoticesProps) {
 
   useEffect(() => {
     fetchNotices();
-    fetchExcludedUrls();
     fetchLastCrawl();
-  }, [fetchNotices, fetchExcludedUrls, fetchLastCrawl]);
+  }, [fetchNotices, fetchLastCrawl]);
 
-  const handleExclude = async (notice: Notice) => {
-    try {
-      await excludeApi.add(notice.url, '관심없음');
-      setExcludedUrls(prev => new Set([...prev, notice.url]));
-    } catch (err) {
-      console.error('제외 실패:', err);
-    }
+  // 제외 목록 변경시 로컬스토리지에 저장
+  useEffect(() => {
+    saveExcludedUrls(excludedUrls);
+  }, [excludedUrls]);
+
+  const handleExclude = (notice: Notice) => {
+    setExcludedUrls(prev => new Set([...prev, notice.url]));
   };
 
-  const handleRestore = async (notice: Notice) => {
-    try {
-      await excludeApi.removeByUrl(notice.url);
-      setExcludedUrls(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(notice.url);
-        return newSet;
-      });
-    } catch (err) {
-      console.error('복원 실패:', err);
-    }
+  const handleRestore = (notice: Notice) => {
+    setExcludedUrls(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(notice.url);
+      return newSet;
+    });
   };
 
   const isExcluded = (url: string) => excludedUrls.has(url);
@@ -117,12 +123,6 @@ export default function Notices({ onLogout }: NoticesProps) {
                 마지막 수집: {formatDate(lastCrawl.crawled_at)}
               </span>
             )}
-            <button
-              onClick={onLogout}
-              className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
-            >
-              로그아웃
-            </button>
           </div>
         </div>
       </header>
@@ -210,7 +210,7 @@ export default function Notices({ onLogout }: NoticesProps) {
                         <span className="px-2 py-0.5 bg-gray-100 rounded text-xs">
                           {notice.source}
                         </span>
-                        {notice.llm_score !== null ? (
+                        {notice.llm_score !== null && notice.llm_score !== undefined ? (
                           <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
                             AI {notice.llm_score}점
                           </span>
@@ -225,6 +225,11 @@ export default function Notices({ onLogout }: NoticesProps) {
                           </span>
                         )}
                       </div>
+                      {notice.llm_reason && (
+                        <p className="text-xs text-purple-600 mt-1">
+                          AI: {notice.llm_reason}
+                        </p>
+                      )}
                       {notice.summary && (
                         <p className="text-sm text-gray-600 mt-2 bg-gray-50 p-2 rounded">
                           {notice.summary}
