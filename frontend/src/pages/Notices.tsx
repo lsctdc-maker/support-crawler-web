@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { noticeApi, excludeApi } from '../services/api';
-import { Notice } from '../lib/supabase';
+import { noticeApi, excludeApi, crawlApi } from '../services/api';
+import { Notice, CrawlLog } from '../lib/supabase';
 
 interface NoticesProps {
   onLogout: () => void;
@@ -15,6 +15,7 @@ export default function Notices({ onLogout }: NoticesProps) {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [hideExcluded, setHideExcluded] = useState(true);
+  const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
@@ -43,10 +44,22 @@ export default function Notices({ onLogout }: NoticesProps) {
     }
   }, []);
 
+  const fetchLastCrawl = useCallback(async () => {
+    try {
+      const logs = await crawlApi.getLogs(1);
+      if (logs.length > 0) {
+        setLastCrawl(logs[0]);
+      }
+    } catch (err) {
+      console.error('수집 로그 조회 실패:', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchNotices();
     fetchExcludedUrls();
-  }, [fetchNotices, fetchExcludedUrls]);
+    fetchLastCrawl();
+  }, [fetchNotices, fetchExcludedUrls, fetchLastCrawl]);
 
   const handleExclude = async (notice: Notice) => {
     try {
@@ -54,6 +67,19 @@ export default function Notices({ onLogout }: NoticesProps) {
       setExcludedUrls(prev => new Set([...prev, notice.url]));
     } catch (err) {
       console.error('제외 실패:', err);
+    }
+  };
+
+  const handleRestore = async (notice: Notice) => {
+    try {
+      await excludeApi.removeByUrl(notice.url);
+      setExcludedUrls(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(notice.url);
+        return newSet;
+      });
+    } catch (err) {
+      console.error('복원 실패:', err);
     }
   };
 
@@ -65,16 +91,32 @@ export default function Notices({ onLogout }: NoticesProps) {
 
   const totalPages = Math.ceil(total / 20);
 
+  const formatDate = (dateStr: string) => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleString('ko-KR', {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
       {/* 헤더 */}
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold text-gray-800">지원사업 공고 수집기</h1>
-          <div className="flex gap-2 items-center">
-            <span className="text-sm text-gray-500">
-              로컬 크롤러에서 데이터 수집
-            </span>
+          <div className="flex gap-4 items-center">
+            {lastCrawl && (
+              <span className="text-sm text-gray-500">
+                마지막 수집: {formatDate(lastCrawl.crawled_at)}
+              </span>
+            )}
             <button
               onClick={onLogout}
               className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
@@ -124,6 +166,15 @@ export default function Notices({ onLogout }: NoticesProps) {
           </div>
         </div>
 
+        {/* 안내 메시지 */}
+        {total === 0 && !loading && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            <p className="text-yellow-800">
+              <strong>데이터 수집 필요:</strong> 로컬 PC에서 크롤러(gui_app.py)를 실행하여 공고를 수집해주세요.
+            </p>
+          </div>
+        )}
+
         {/* 공고 목록 */}
         <div className="bg-white rounded-lg shadow">
           {loading ? (
@@ -131,7 +182,9 @@ export default function Notices({ onLogout }: NoticesProps) {
           ) : displayNotices.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               {total === 0
-                ? '공고가 없습니다. 로컬 크롤러로 수집해주세요.'
+                ? '공고가 없습니다.'
+                : hideExcluded
+                ? '모든 공고가 관심없음 처리되었습니다. 체크박스를 해제하여 확인하세요.'
                 : '필터에 맞는 공고가 없습니다.'}
             </div>
           ) : (
@@ -139,7 +192,7 @@ export default function Notices({ onLogout }: NoticesProps) {
               {displayNotices.map((notice) => (
                 <div
                   key={notice.id}
-                  className={`p-4 hover:bg-gray-50 ${isExcluded(notice.url) ? 'opacity-50' : ''}`}
+                  className={`p-4 hover:bg-gray-50 ${isExcluded(notice.url) ? 'bg-gray-100 opacity-60' : ''}`}
                 >
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
@@ -166,6 +219,11 @@ export default function Notices({ onLogout }: NoticesProps) {
                             관련도 {notice.relevance}
                           </span>
                         )}
+                        {isExcluded(notice.url) && (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">
+                            관심없음
+                          </span>
+                        )}
                       </div>
                       {notice.summary && (
                         <p className="text-sm text-gray-600 mt-2 bg-gray-50 p-2 rounded">
@@ -173,15 +231,25 @@ export default function Notices({ onLogout }: NoticesProps) {
                         </p>
                       )}
                     </div>
-                    {!isExcluded(notice.url) && (
-                      <button
-                        onClick={() => handleExclude(notice)}
-                        className="text-gray-400 hover:text-red-500 text-sm ml-4"
-                        title="관심없음"
-                      >
-                        X
-                      </button>
-                    )}
+                    <div className="ml-4">
+                      {isExcluded(notice.url) ? (
+                        <button
+                          onClick={() => handleRestore(notice)}
+                          className="text-blue-500 hover:text-blue-700 text-sm px-2 py-1 border border-blue-300 rounded"
+                          title="관심없음 해제"
+                        >
+                          복원
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleExclude(notice)}
+                          className="text-gray-400 hover:text-red-500 text-sm"
+                          title="관심없음"
+                        >
+                          X
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
