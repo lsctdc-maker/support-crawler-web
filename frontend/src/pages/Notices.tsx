@@ -52,32 +52,29 @@ export default function Notices() {
   const [loading, setLoading] = useState(false);
   const [hideExcluded, setHideExcluded] = useState(true);
   const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
-  const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'mid7' | 'mid' | 'low'>('mid7'); // 점수 필터 (기본: 7점 이상)
+  const [scoreFilter, setScoreFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('8'); // 점수 필터 (기본: 8점)
   const [sortBy, setSortBy] = useState<'relevance' | 'date'>('relevance');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
-  // AI 요약 관련 상태
-  const [summaryNotice, setSummaryNotice] = useState<Notice | null>(null);
-  const [summaryContent, setSummaryContent] = useState<string>('');
-  const [summaryLoading, setSummaryLoading] = useState(false);
+  // AI 요약 토글 상태 (확장된 공고 ID들)
+  const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<number>>(new Set());
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
     try {
-      // 점수 필터에 따른 최소 관련도 설정
+      // 점수 필터에 따른 관련도 설정 (1점 단위)
       let minRelevance = 0;
       let maxRelevance = 10;
-      if (hideLowRelevance) {
-        if (scoreFilter === 'high') {
-          minRelevance = 8;
-        } else if (scoreFilter === 'mid7') {
-          minRelevance = 7;  // 7점 이상
-        } else if (scoreFilter === 'mid') {
-          minRelevance = 5;
-          maxRelevance = 6;
-        } else if (scoreFilter === 'low') {
+      if (hideLowRelevance && scoreFilter !== 'all') {
+        const score = parseInt(scoreFilter);
+        if (scoreFilter === '4') {
+          // 4점 이하
           minRelevance = 0;
           maxRelevance = 4;
+        } else {
+          // 특정 점수만
+          minRelevance = score;
+          maxRelevance = score;
         }
       }
 
@@ -134,34 +131,17 @@ export default function Notices() {
 
   const isExcluded = (url: string) => excludedUrls.has(url);
 
-  // AI 요약 생성
-  const handleSummarize = async (notice: Notice) => {
-    setSummaryNotice(notice);
-    setSummaryContent('');
-    setSummaryLoading(true);
-
-    try {
-      const response = await fetch('/api/summarize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ noticeId: notice.id, url: notice.url, title: notice.title, agency: notice.agency }),
-      });
-
-      if (!response.ok) throw new Error('요약 생성 실패');
-
-      const data = await response.json();
-      setSummaryContent(data.summary);
-    } catch (err) {
-      console.error('요약 생성 실패:', err);
-      setSummaryContent('요약을 생성할 수 없습니다. 잠시 후 다시 시도해주세요.');
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  const closeSummaryModal = () => {
-    setSummaryNotice(null);
-    setSummaryContent('');
+  // AI 요약 토글
+  const handleToggleSummary = (noticeId: number) => {
+    setExpandedNoticeIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(noticeId)) {
+        newSet.delete(noticeId);
+      } else {
+        newSet.add(noticeId);
+      }
+      return newSet;
+    });
   };
 
   // 필터링된 공고 목록
@@ -248,15 +228,18 @@ export default function Notices() {
               <span className="text-xs text-gray-500">점수:</span>
               <select
                 value={scoreFilter}
-                onChange={(e) => { setScoreFilter(e.target.value as 'all' | 'high' | 'mid7' | 'mid' | 'low'); setPage(1); }}
+                onChange={(e) => { setScoreFilter(e.target.value as 'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'); setPage(1); }}
                 className="border rounded px-3 py-2 text-sm"
                 disabled={!hideLowRelevance}
               >
                 <option value="all">전체</option>
-                <option value="high">8점 이상 (추천)</option>
-                <option value="mid7">7점 이상</option>
-                <option value="mid">5~6점</option>
-                <option value="low">4점 이하</option>
+                <option value="10">10점</option>
+                <option value="9">9점</option>
+                <option value="8">8점</option>
+                <option value="7">7점</option>
+                <option value="6">6점</option>
+                <option value="5">5점</option>
+                <option value="4">4점 이하</option>
               </select>
             </div>
 
@@ -364,16 +347,9 @@ export default function Notices() {
                           )}
                         </div>
 
-                        {/* 8점 이상: 추천 공고 한줄 요약 (강조) */}
-                        {score >= 8 && notice.llm_reason && (
-                          <p className="text-sm text-green-700 mt-2 ml-12 bg-green-50 border border-green-200 p-2 rounded font-medium">
-                            ⭐ 추천: {notice.llm_reason}
-                          </p>
-                        )}
-
-                        {/* 8점 미만: 일반 AI 판단 이유 */}
-                        {score < 8 && notice.llm_reason && (
-                          <p className="text-sm text-purple-600 mt-2 ml-12 bg-purple-50 p-2 rounded">
+                        {/* AI 요약 (llm_reason) - 기본 2줄, 버튼으로 확장 */}
+                        {notice.llm_reason && (
+                          <p className={`text-sm text-green-700 mt-2 ml-12 bg-green-50 border border-green-200 p-2 rounded ${expandedNoticeIds.has(notice.id) ? '' : 'line-clamp-2'}`}>
                             AI: {notice.llm_reason}
                           </p>
                         )}
@@ -388,14 +364,16 @@ export default function Notices() {
 
                       {/* 액션 버튼 */}
                       <div className="ml-4 flex flex-col gap-1">
-                        {/* AI 요약 버튼 */}
-                        <button
-                          onClick={() => handleSummarize(notice)}
-                          className="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 border border-purple-300 rounded hover:bg-purple-50"
-                          title="AI 요약 보기"
-                        >
-                          AI 요약
-                        </button>
+                        {/* AI 요약 토글 버튼 - llm_reason 있을 때만 표시 */}
+                        {notice.llm_reason && (
+                          <button
+                            onClick={() => handleToggleSummary(notice.id)}
+                            className="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 border border-purple-300 rounded hover:bg-purple-50"
+                            title="AI 요약 보기"
+                          >
+                            {expandedNoticeIds.has(notice.id) ? '접기' : 'AI 요약'}
+                          </button>
+                        )}
                         {isExcluded(notice.url) ? (
                           <button
                             onClick={() => handleRestore(notice)}
@@ -450,59 +428,6 @@ export default function Notices() {
         </div>
       </div>
 
-      {/* AI 요약 모달 */}
-      {summaryNotice && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
-            {/* 모달 헤더 */}
-            <div className="p-4 border-b flex justify-between items-start">
-              <div>
-                <h3 className="font-bold text-lg text-gray-800">{summaryNotice.title}</h3>
-                <p className="text-sm text-gray-500 mt-1">{summaryNotice.agency}</p>
-              </div>
-              <button
-                onClick={closeSummaryModal}
-                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* 모달 내용 */}
-            <div className="p-4 overflow-y-auto max-h-[60vh]">
-              {summaryLoading ? (
-                <div className="flex flex-col items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600 mb-4"></div>
-                  <p className="text-gray-500">AI가 공고를 분석하고 있습니다...</p>
-                  <p className="text-xs text-gray-400 mt-1">잠시만 기다려주세요</p>
-                </div>
-              ) : (
-                <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                  {summaryContent}
-                </div>
-              )}
-            </div>
-
-            {/* 모달 푸터 */}
-            <div className="p-4 border-t flex justify-between items-center bg-gray-50">
-              <a
-                href={summaryNotice.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline text-sm"
-              >
-                원문 보기
-              </a>
-              <button
-                onClick={closeSummaryModal}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-sm"
-              >
-                닫기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
