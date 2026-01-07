@@ -18,19 +18,7 @@ export const noticeApi = {
       .from('notices')
       .select('*', { count: 'exact' });
 
-    // 정렬: 관련도 순 또는 날짜순
-    if (sortBy === 'relevance') {
-      // AI 점수 우선, 없으면 일반 관련도
-      query = query
-        .order('llm_score', { ascending: false, nullsFirst: false })
-        .order('relevance', { ascending: false })
-        .order('created_at', { ascending: false });
-    } else {
-      query = query.order('created_at', { ascending: false });
-    }
-
-    query = query.range(offset, offset + size - 1);
-
+    // 1. 필터 먼저 적용
     // 소스 필터
     if (source) {
       const sourceMap: Record<string, string> = {
@@ -46,21 +34,36 @@ export const noticeApi = {
       query = query.ilike('title', `%${search}%`);
     }
 
-    // 관련도 범위 필터
+    // 관련도 필터 (llm_score 우선, 없으면 relevance 사용)
     if (minRelevance > 0 && maxRelevance !== undefined) {
-      // 범위 필터 (예: 6~7점)
+      // 범위 필터 (예: 5~6점)
       query = query.or(
         `and(llm_score.gte.${minRelevance},llm_score.lte.${maxRelevance}),and(llm_score.is.null,relevance.gte.${minRelevance},relevance.lte.${maxRelevance})`
       );
     } else if (minRelevance > 0) {
-      // 최소 관련도만 필터
-      query = query.or(`llm_score.gte.${minRelevance},and(llm_score.is.null,relevance.gte.${minRelevance})`);
+      // 최소 관련도만 필터 (예: 7점 이상)
+      query = query.or(
+        `llm_score.gte.${minRelevance},and(llm_score.is.null,relevance.gte.${minRelevance})`
+      );
     } else if (maxRelevance !== undefined) {
-      // 최대 관련도만 필터 (5점 이하)
+      // 최대 관련도만 필터 (예: 4점 이하)
       query = query.or(
         `llm_score.lte.${maxRelevance},and(llm_score.is.null,relevance.lte.${maxRelevance})`
       );
     }
+
+    // 2. 정렬
+    if (sortBy === 'relevance') {
+      query = query
+        .order('llm_score', { ascending: false, nullsFirst: false })
+        .order('relevance', { ascending: false })
+        .order('created_at', { ascending: false });
+    } else {
+      query = query.order('created_at', { ascending: false });
+    }
+
+    // 3. 페이지네이션 마지막에 적용
+    query = query.range(offset, offset + size - 1);
 
     const { data, count, error } = await query;
 
