@@ -138,8 +138,7 @@ export default function Notices() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [hideExcluded, setHideExcluded] = useState(true);
-  const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
-  const [scoreFilter, setScoreFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('8'); // 점수 필터 (기본: 8점)
+  const [scoreFilter, setScoreFilter] = useState<'all' | 'unevaluated' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('all'); // 점수 필터
   const [sortBy, setSortBy] = useState<'score' | 'deadline' | 'date'>('score');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
@@ -165,17 +164,19 @@ export default function Notices() {
   const fetchNotices = useCallback(async () => {
     setLoading(true);
     try {
-      // 점수 필터에 따른 관련도 설정 (1점 단위)
-      let minRelevance = 0;
-      let maxRelevance = 10;
-      if (hideLowRelevance && scoreFilter !== 'all') {
+      // 점수 필터에 따른 관련도 설정
+      let minRelevance: number | undefined;
+      let maxRelevance: number | undefined;
+
+      if (scoreFilter === 'unevaluated') {
+        // 미평가: llm_score가 null인 것만 - API에서 별도 처리 필요
+        // 일단 전체 조회 후 클라이언트에서 필터링
+      } else if (scoreFilter !== 'all') {
         const score = parseInt(scoreFilter);
         if (scoreFilter === '4') {
-          // 4점 이하
           minRelevance = 0;
           maxRelevance = 4;
         } else {
-          // 특정 점수만
           minRelevance = score;
           maxRelevance = score;
         }
@@ -187,7 +188,7 @@ export default function Notices() {
         page,
         size: 50,
         minRelevance,
-        maxRelevance: maxRelevance < 10 ? maxRelevance : undefined,
+        maxRelevance,
         sortBy: 'relevance',
       });
       setNotices(data.items);
@@ -197,7 +198,7 @@ export default function Notices() {
     } finally {
       setLoading(false);
     }
-  }, [source, search, page, hideLowRelevance, scoreFilter]);
+  }, [source, search, page, scoreFilter]);
 
   const fetchLastCrawl = useCallback(async () => {
     try {
@@ -405,6 +406,9 @@ export default function Notices() {
     // AI 요약 없는 것만 보기
     if (showNoAiSummaryOnly && n.llm_reason) return false;
 
+    // 점수 필터: 미평가 (llm_score가 null인 것만)
+    if (scoreFilter === 'unevaluated' && n.llm_score !== null) return false;
+
     // 마감 임박 필터
     if (deadlineFilter !== 'all') {
       const dday = calculateDday(n.end_date);
@@ -529,11 +533,11 @@ export default function Notices() {
               <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>점수:</span>
               <select
                 value={scoreFilter}
-                onChange={(e) => { setScoreFilter(e.target.value as 'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'); setPage(1); }}
+                onChange={(e) => { setScoreFilter(e.target.value as typeof scoreFilter); setPage(1); }}
                 className={`border rounded px-3 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
-                disabled={!hideLowRelevance}
               >
                 <option value="all">전체</option>
+                <option value="unevaluated">미평가</option>
                 <option value="10">10점</option>
                 <option value="9">9점</option>
                 <option value="8">8점</option>
@@ -582,15 +586,6 @@ export default function Notices() {
             <label className={`flex items-center gap-2 text-sm cursor-pointer ${darkMode ? 'text-gray-300' : ''}`}>
               <input
                 type="checkbox"
-                checked={hideLowRelevance}
-                onChange={(e) => { setHideLowRelevance(e.target.checked); setPage(1); }}
-                className="w-4 h-4"
-              />
-              낮은 관련도 숨기기
-            </label>
-            <label className={`flex items-center gap-2 text-sm cursor-pointer ${darkMode ? 'text-gray-300' : ''}`}>
-              <input
-                type="checkbox"
                 checked={hideExcluded}
                 onChange={(e) => setHideExcluded(e.target.checked)}
                 className="w-4 h-4"
@@ -613,7 +608,7 @@ export default function Notices() {
                 onChange={(e) => { setShowNoAiSummaryOnly(e.target.checked); setPage(1); }}
                 className="w-4 h-4"
               />
-              AI 요약 없는 것만
+              미평가 공고만 (전체 AI 평가용)
             </label>
           </div>
 
@@ -633,7 +628,6 @@ export default function Notices() {
                       } else {
                         setScoreFilter(String(score) as '10' | '9' | '8' | '7' | '6' | '5');
                       }
-                      setHideLowRelevance(true);
                       setPage(1);
                     }}
                     className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
