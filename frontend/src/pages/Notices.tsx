@@ -121,14 +121,6 @@ const getDdayColor = (dday: number | null): string => {
   return 'bg-blue-500 text-white';
 };
 
-// 관련도 점수 가져오기 (AI 점수 우선)
-const getRelevanceScore = (notice: Notice): number => {
-  if (notice.llm_score !== null && notice.llm_score !== undefined) {
-    return notice.llm_score;
-  }
-  return notice.relevance || 0;
-};
-
 // HTML 태그 제거
 const stripHtml = (html: string): string => {
   if (!html) return '';
