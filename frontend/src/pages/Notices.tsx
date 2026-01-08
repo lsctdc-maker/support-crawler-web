@@ -286,7 +286,7 @@ export default function Notices() {
 
   // 새 공고 여부 확인
   const isNewNotice = (notice: Notice): boolean => {
-    if (!lastVisitTime) return false;
+    if (!lastVisitTime || !notice.crawled_at) return false;
     try {
       const crawledAt = new Date(notice.crawled_at);
       const lastVisit = new Date(lastVisitTime);
