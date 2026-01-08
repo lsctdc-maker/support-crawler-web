@@ -59,6 +59,9 @@ export default function Notices() {
   // AI 요약 토글 상태 (확장된 공고 ID들)
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<number>>(new Set());
 
+  // 점수별 통계
+  const [scoreStats, setScoreStats] = useState<Record<number, number>>({});
+
   const fetchNotices = useCallback(async () => {
     setLoading(true);
     try {
@@ -107,10 +110,21 @@ export default function Notices() {
     }
   }, []);
 
+  // 점수별 통계 조회
+  const fetchScoreStats = useCallback(async () => {
+    try {
+      const stats = await noticeApi.getScoreStats();
+      setScoreStats(stats);
+    } catch (err) {
+      console.error('점수 통계 조회 실패:', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchNotices();
     fetchLastCrawl();
-  }, [fetchNotices, fetchLastCrawl]);
+    fetchScoreStats();
+  }, [fetchNotices, fetchLastCrawl, fetchScoreStats]);
 
   // 제외 목록 변경시 로컬스토리지에 저장
   useEffect(() => {
@@ -283,6 +297,42 @@ export default function Notices() {
               관심없음 숨기기
             </label>
           </div>
+
+          {/* 점수별 통계 */}
+          {Object.keys(scoreStats).length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
+              <span className="text-xs text-gray-500 mr-2">점수별:</span>
+              {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map(score => {
+                const count = scoreStats[score] || 0;
+                if (count === 0) return null;
+                return (
+                  <button
+                    key={score}
+                    onClick={() => {
+                      if (score <= 4) {
+                        setScoreFilter('4');
+                      } else {
+                        setScoreFilter(String(score) as '10' | '9' | '8' | '7' | '6' | '5');
+                      }
+                      setHideLowRelevance(true);
+                      setPage(1);
+                    }}
+                    className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                      (scoreFilter === String(score) || (score <= 4 && scoreFilter === '4'))
+                        ? 'bg-blue-600 text-white'
+                        : score >= 8
+                          ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                          : score >= 6
+                            ? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {score}점: {count}건
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* 안내 메시지 */}

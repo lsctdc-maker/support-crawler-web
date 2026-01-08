@@ -85,6 +85,30 @@ export const noticeApi = {
     if (error) throw error;
     return data as Notice;
   },
+
+  // 점수별 통계 조회
+  getScoreStats: async () => {
+    const { data, error } = await supabase
+      .from('notices')
+      .select('llm_score, relevance');
+
+    if (error) throw error;
+
+    // 점수별 건수 집계 (llm_score 우선, 없으면 relevance)
+    const stats: Record<number, number> = {};
+    for (let i = 0; i <= 10; i++) {
+      stats[i] = 0;
+    }
+
+    data?.forEach((item: { llm_score: number | null; relevance: number | null }) => {
+      const score = item.llm_score ?? item.relevance ?? 0;
+      if (score >= 0 && score <= 10) {
+        stats[score]++;
+      }
+    });
+
+    return stats;
+  },
 };
 
 // 크롤링 로그 API
