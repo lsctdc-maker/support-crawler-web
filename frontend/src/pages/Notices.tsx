@@ -162,6 +162,7 @@ export default function Notices() {
   const [darkMode, setDarkMode] = useState(loadDarkMode);
   const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'd7' | 'd3'>('all');
   const [lastVisitTime] = useState<string | null>(() => loadLastVisit());
+  const [showNoAiSummaryOnly, setShowNoAiSummaryOnly] = useState(false);
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
@@ -313,6 +314,9 @@ export default function Notices() {
   const displayNotices = notices.filter(n => {
     if (hideExcluded && isExcluded(n.url)) return false;
     if (showBookmarksOnly && !isBookmarked(n.url)) return false;
+
+    // AI 요약 없는 것만 보기
+    if (showNoAiSummaryOnly && n.llm_reason) return false;
 
     // 마감 임박 필터
     if (deadlineFilter !== 'all') {
@@ -489,6 +493,15 @@ export default function Notices() {
               />
               북마크만 보기 {bookmarkedUrls.size > 0 && `(${bookmarkedUrls.size})`}
             </label>
+            <label className={`flex items-center gap-2 text-sm cursor-pointer ${darkMode ? 'text-gray-300' : ''}`}>
+              <input
+                type="checkbox"
+                checked={showNoAiSummaryOnly}
+                onChange={(e) => { setShowNoAiSummaryOnly(e.target.checked); setPage(1); }}
+                className="w-4 h-4"
+              />
+              AI 요약 없는 것만
+            </label>
           </div>
 
           {/* 점수별 통계 */}
@@ -648,8 +661,8 @@ export default function Notices() {
                             ☆ 저장
                           </button>
                         )}
-                        {/* AI 요약 토글 버튼 - llm_reason 있을 때만 표시 */}
-                        {notice.llm_reason && (
+                        {/* AI 요약 상태 표시 - llm_reason 없을 때 "요약 없음" 표시 */}
+                        {notice.llm_reason ? (
                           <button
                             onClick={() => handleToggleSummary(notice.id)}
                             className={`text-xs px-2 py-1 border rounded ${darkMode ? 'text-purple-400 border-purple-600 hover:bg-purple-900/30' : 'text-purple-500 border-purple-300 hover:text-purple-700 hover:bg-purple-50'}`}
@@ -657,6 +670,10 @@ export default function Notices() {
                           >
                             {expandedNoticeIds.has(notice.id) ? '접기' : 'AI 요약'}
                           </button>
+                        ) : (
+                          <span className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-gray-500' : 'bg-gray-200 text-gray-500'}`}>
+                            요약 없음
+                          </span>
                         )}
                         {isExcluded(notice.url) ? (
                           <button
