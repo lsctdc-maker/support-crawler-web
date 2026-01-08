@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { noticeApi, crawlApi } from '../services/api';
-import { Notice, CrawlLog } from '../lib/supabase';
+import { Notice, CrawlLog, supabase } from '../lib/supabase';
 
 // 로컬스토리지 키
 const EXCLUDED_URLS_KEY = 'excluded_notice_urls';
@@ -163,6 +163,7 @@ export default function Notices() {
   const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'd7' | 'd3'>('all');
   const [lastVisitTime] = useState<string | null>(() => loadLastVisit());
   const [showNoAiSummaryOnly, setShowNoAiSummaryOnly] = useState(false);
+  const [evaluatingIds, setEvaluatingIds] = useState<Set<number>>(new Set());
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
@@ -308,6 +309,35 @@ export default function Notices() {
       }
       return newSet;
     });
+  };
+
+  // AI 평가 실행
+  const handleEvaluate = async (notice: Notice) => {
+    setEvaluatingIds(prev => new Set(prev).add(notice.id));
+    try {
+      const result = await noticeApi.evaluate({
+        id: notice.id,
+        title: notice.title,
+        agency: notice.agency || undefined,
+        summary: notice.summary || undefined,
+      });
+      // Supabase 업데이트
+      await supabase
+        .from('notices')
+        .update({ llm_score: result.score, llm_reason: result.reason })
+        .eq('id', notice.id);
+      // UI 갱신
+      fetchNotices();
+    } catch (error) {
+      console.error('AI 평가 실패:', error);
+      alert('AI 평가에 실패했습니다.');
+    } finally {
+      setEvaluatingIds(prev => {
+        const next = new Set(prev);
+        next.delete(notice.id);
+        return next;
+      });
+    }
   };
 
   // 필터링된 공고 목록
@@ -661,7 +691,7 @@ export default function Notices() {
                             ☆ 저장
                           </button>
                         )}
-                        {/* AI 요약 상태 표시 - llm_reason 없을 때 "요약 없음" 표시 */}
+                        {/* AI 요약/평가 버튼 */}
                         {notice.llm_reason ? (
                           <button
                             onClick={() => handleToggleSummary(notice.id)}
@@ -670,10 +700,18 @@ export default function Notices() {
                           >
                             {expandedNoticeIds.has(notice.id) ? '접기' : 'AI 요약'}
                           </button>
-                        ) : (
-                          <span className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-gray-500' : 'bg-gray-200 text-gray-500'}`}>
-                            요약 없음
+                        ) : evaluatingIds.has(notice.id) ? (
+                          <span className={`text-xs px-2 py-1 rounded animate-pulse ${darkMode ? 'bg-blue-900 text-blue-300' : 'bg-blue-100 text-blue-600'}`}>
+                            평가 중...
                           </span>
+                        ) : (
+                          <button
+                            onClick={() => handleEvaluate(notice)}
+                            className={`text-xs px-2 py-1 border rounded ${darkMode ? 'text-green-400 border-green-600 hover:bg-green-900/30' : 'text-green-600 border-green-300 hover:text-green-700 hover:bg-green-50'}`}
+                            title="AI 평가 실행"
+                          >
+                            AI 평가
+                          </button>
                         )}
                         {isExcluded(notice.url) ? (
                           <button

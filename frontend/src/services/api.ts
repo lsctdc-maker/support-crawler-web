@@ -107,6 +107,25 @@ export const noticeApi = {
 
     return stats;
   },
+
+  // AI 평가 API 호출
+  evaluate: async (params: {
+    id: number;
+    title: string;
+    agency?: string;
+    summary?: string;
+  }): Promise<{ id: number; score: number; reason: string }> => {
+    const response = await fetch('/api/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'AI 평가 실패');
+    }
+    return response.json();
+  },
 };
 
 // 크롤링 로그 API
