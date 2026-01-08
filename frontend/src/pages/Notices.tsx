@@ -550,8 +550,7 @@ export default function Notices() {
           ) : (
             <div className={`divide-y ${darkMode ? 'divide-gray-700' : ''}`}>
               {displayNotices.map((notice) => {
-                const score = getRelevanceScore(notice);
-                const hasAiScore = notice.llm_score !== null && notice.llm_score !== undefined;
+                const score = notice.llm_score ?? 0;
                 const dday = calculateDday(notice.end_date);
                 const ddayText = getDdayText(dday);
                 const isNew = isNewNotice(notice);
@@ -566,7 +565,7 @@ export default function Notices() {
                         {/* 제목 + 점수 + D-day + NEW */}
                         <div className="flex items-start gap-2 flex-wrap">
                           <span className={`px-2 py-1 rounded text-sm font-bold ${getScoreBgColor(score)}`}>
-                            {hasAiScore ? `AI ${score}` : score}점
+                            AI {score}점
                           </span>
                           {ddayText && (
                             <span className={`px-2 py-1 rounded text-xs font-bold ${getDdayColor(dday)}`}>

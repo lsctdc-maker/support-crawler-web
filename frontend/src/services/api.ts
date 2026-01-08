@@ -34,22 +34,19 @@ export const noticeApi = {
       query = query.ilike('title', `%${search}%`);
     }
 
-    // 관련도 필터 (llm_score 우선, 없으면 relevance 사용)
+    // AI 점수 있는 것만 조회 (llm_score NOT NULL)
+    query = query.not('llm_score', 'is', null);
+
+    // 관련도 필터 (llm_score만 사용)
     if (minRelevance > 0 && maxRelevance !== undefined) {
       // 범위 필터 (예: 5~6점)
-      query = query.or(
-        `and(llm_score.gte.${minRelevance},llm_score.lte.${maxRelevance}),and(llm_score.is.null,relevance.gte.${minRelevance},relevance.lte.${maxRelevance})`
-      );
+      query = query.gte('llm_score', minRelevance).lte('llm_score', maxRelevance);
     } else if (minRelevance > 0) {
       // 최소 관련도만 필터 (예: 7점 이상)
-      query = query.or(
-        `llm_score.gte.${minRelevance},and(llm_score.is.null,relevance.gte.${minRelevance})`
-      );
+      query = query.gte('llm_score', minRelevance);
     } else if (maxRelevance !== undefined) {
       // 최대 관련도만 필터 (예: 4점 이하)
-      query = query.or(
-        `llm_score.lte.${maxRelevance},and(llm_score.is.null,relevance.lte.${maxRelevance})`
-      );
+      query = query.lte('llm_score', maxRelevance);
     }
 
     // 2. 정렬
@@ -86,22 +83,23 @@ export const noticeApi = {
     return data as Notice;
   },
 
-  // 점수별 통계 조회
+  // 점수별 통계 조회 (AI 점수만)
   getScoreStats: async () => {
     const { data, error } = await supabase
       .from('notices')
-      .select('llm_score, relevance');
+      .select('llm_score')
+      .not('llm_score', 'is', null);
 
     if (error) throw error;
 
-    // 점수별 건수 집계 (llm_score 우선, 없으면 relevance)
+    // 점수별 건수 집계 (llm_score만)
     const stats: Record<number, number> = {};
     for (let i = 0; i <= 10; i++) {
       stats[i] = 0;
     }
 
-    data?.forEach((item: { llm_score: number | null; relevance: number | null }) => {
-      const score = item.llm_score ?? item.relevance ?? 0;
+    data?.forEach((item: { llm_score: number | null }) => {
+      const score = item.llm_score ?? 0;
       if (score >= 0 && score <= 10) {
         stats[score]++;
       }
