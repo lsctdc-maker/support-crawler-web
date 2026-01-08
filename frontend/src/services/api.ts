@@ -10,8 +10,9 @@ export const noticeApi = {
     minRelevance?: number;
     maxRelevance?: number;
     sortBy?: 'relevance' | 'date';
+    scoreFilter?: 'all' | 'unevaluated' | string;
   }) => {
-    const { source, search, page = 1, size = 20, minRelevance = 0, maxRelevance, sortBy = 'relevance' } = params;
+    const { source, search, page = 1, size = 20, minRelevance, maxRelevance, sortBy = 'relevance', scoreFilter = 'all' } = params;
     const offset = (page - 1) * size;
 
     let query = supabase
@@ -34,14 +35,21 @@ export const noticeApi = {
       query = query.ilike('title', `%${search}%`);
     }
 
-    // AI 점수 있는 것만 조회 (llm_score NOT NULL)
-    query = query.not('llm_score', 'is', null);
+    // 점수 필터
+    if (scoreFilter === 'unevaluated') {
+      // 미평가: llm_score가 null인 것만
+      query = query.is('llm_score', null);
+    } else if (scoreFilter !== 'all') {
+      // 특정 점수: llm_score NOT NULL 필요
+      query = query.not('llm_score', 'is', null);
+    }
+    // all: 전체 (필터 없음)
 
     // 관련도 필터 (llm_score만 사용)
-    if (minRelevance > 0 && maxRelevance !== undefined) {
+    if (minRelevance !== undefined && minRelevance > 0 && maxRelevance !== undefined) {
       // 범위 필터 (예: 5~6점)
       query = query.gte('llm_score', minRelevance).lte('llm_score', maxRelevance);
-    } else if (minRelevance > 0) {
+    } else if (minRelevance !== undefined && minRelevance > 0) {
       // 최소 관련도만 필터 (예: 7점 이상)
       query = query.gte('llm_score', minRelevance);
     } else if (maxRelevance !== undefined) {

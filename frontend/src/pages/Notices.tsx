@@ -168,10 +168,7 @@ export default function Notices() {
       let minRelevance: number | undefined;
       let maxRelevance: number | undefined;
 
-      if (scoreFilter === 'unevaluated') {
-        // 미평가: llm_score가 null인 것만 - API에서 별도 처리 필요
-        // 일단 전체 조회 후 클라이언트에서 필터링
-      } else if (scoreFilter !== 'all') {
+      if (scoreFilter !== 'all' && scoreFilter !== 'unevaluated') {
         const score = parseInt(scoreFilter);
         if (scoreFilter === '4') {
           minRelevance = 0;
@@ -190,6 +187,7 @@ export default function Notices() {
         minRelevance,
         maxRelevance,
         sortBy: 'relevance',
+        scoreFilter,
       });
       setNotices(data.items);
       setTotal(data.total);
@@ -370,32 +368,6 @@ export default function Notices() {
 
     setBulkEvaluating(false);
     fetchNotices();
-  };
-
-  // CSV 내보내기
-  const handleExportCSV = () => {
-    const headers = ['제목', '기관', 'AI점수', 'AI요약', '마감일', 'URL'];
-    const rows = sortedNotices.map(n => [
-      n.title,
-      n.agency || '',
-      n.llm_score?.toString() || '',
-      (n.llm_reason || '').replace(/"/g, '""'),
-      n.end_date || '',
-      n.url
-    ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `공고목록_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   // 필터링된 공고 목록
@@ -647,7 +619,7 @@ export default function Notices() {
             </div>
           )}
 
-          {/* 액션 버튼 (전체 AI 평가, CSV 다운로드) */}
+          {/* 액션 버튼 (전체 AI 평가) */}
           <div className={`flex flex-wrap gap-2 mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : ''}`}>
             <button
               onClick={handleBulkEvaluate}
@@ -661,16 +633,6 @@ export default function Notices() {
               {bulkEvaluating
                 ? `평가 중... ${bulkProgress.current}/${bulkProgress.total}`
                 : '전체 AI 평가'}
-            </button>
-            <button
-              onClick={handleExportCSV}
-              className={`px-3 py-1 rounded text-sm font-medium ${
-                darkMode
-                  ? 'border border-gray-600 text-gray-300 hover:bg-gray-700'
-                  : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              CSV 다운로드
             </button>
           </div>
           </div>
