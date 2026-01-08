@@ -140,7 +140,7 @@ export default function Notices() {
   const [hideExcluded, setHideExcluded] = useState(true);
   const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
   const [scoreFilter, setScoreFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('8'); // 점수 필터 (기본: 8점)
-  const [sortBy, setSortBy] = useState<'relevance' | 'date'>('relevance');
+  const [sortBy, setSortBy] = useState<'score' | 'deadline' | 'date'>('score');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
   // AI 요약 토글 상태 (확장된 공고 ID들)
@@ -156,6 +156,11 @@ export default function Notices() {
   const [lastVisitTime] = useState<string | null>(() => loadLastVisit());
   const [showNoAiSummaryOnly, setShowNoAiSummaryOnly] = useState(false);
   const [evaluatingIds, setEvaluatingIds] = useState<Set<number>>(new Set());
+
+  // UX 개선: 전체 AI 평가, 필터 토글
+  const [bulkEvaluating, setBulkEvaluating] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+  const [filterExpanded, setFilterExpanded] = useState(true);
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
@@ -183,7 +188,7 @@ export default function Notices() {
         size: 50,
         minRelevance,
         maxRelevance: maxRelevance < 10 ? maxRelevance : undefined,
-        sortBy,
+        sortBy: 'relevance',
       });
       setNotices(data.items);
       setTotal(data.total);
@@ -192,7 +197,7 @@ export default function Notices() {
     } finally {
       setLoading(false);
     }
-  }, [source, search, page, hideLowRelevance, scoreFilter, sortBy]);
+  }, [source, search, page, hideLowRelevance, scoreFilter]);
 
   const fetchLastCrawl = useCallback(async () => {
     try {
@@ -332,6 +337,66 @@ export default function Notices() {
     }
   };
 
+  // 전체 AI 평가 (일괄)
+  const handleBulkEvaluate = async () => {
+    const unevaluated = displayNotices.filter(n => !n.llm_reason);
+    if (unevaluated.length === 0) {
+      alert('평가할 공고가 없습니다.');
+      return;
+    }
+
+    setBulkEvaluating(true);
+    setBulkProgress({ current: 0, total: unevaluated.length });
+
+    for (let i = 0; i < unevaluated.length; i++) {
+      const notice = unevaluated[i];
+      try {
+        const result = await noticeApi.evaluate({
+          id: notice.id,
+          title: notice.title,
+          agency: notice.agency || undefined,
+          summary: notice.summary || undefined,
+        });
+        await supabase
+          .from('notices')
+          .update({ llm_score: result.score, llm_reason: result.reason })
+          .eq('id', notice.id);
+        setBulkProgress({ current: i + 1, total: unevaluated.length });
+      } catch (error) {
+        console.error(`평가 실패: ${notice.id}`, error);
+      }
+    }
+
+    setBulkEvaluating(false);
+    fetchNotices();
+  };
+
+  // CSV 내보내기
+  const handleExportCSV = () => {
+    const headers = ['제목', '기관', 'AI점수', 'AI요약', '마감일', 'URL'];
+    const rows = sortedNotices.map(n => [
+      n.title,
+      n.agency || '',
+      n.llm_score?.toString() || '',
+      (n.llm_reason || '').replace(/"/g, '""'),
+      n.end_date || '',
+      n.url
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `공고목록_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // 필터링된 공고 목록
   const displayNotices = notices.filter(n => {
     if (hideExcluded && isExcluded(n.url)) return false;
@@ -350,6 +415,20 @@ export default function Notices() {
     }
 
     return true;
+  });
+
+  // 로컬 정렬 적용
+  const sortedNotices = [...displayNotices].sort((a, b) => {
+    if (sortBy === 'score') {
+      return (b.llm_score || 0) - (a.llm_score || 0);
+    } else if (sortBy === 'deadline') {
+      const ddayA = calculateDday(a.end_date) ?? 999;
+      const ddayB = calculateDday(b.end_date) ?? 999;
+      return ddayA - ddayB; // 마감 임박한 순
+    } else {
+      // 최신순 (crawled_at 기준)
+      return new Date(b.crawled_at || 0).getTime() - new Date(a.crawled_at || 0).getTime();
+    }
   });
 
   const totalPages = Math.ceil(total / 50);
@@ -404,6 +483,17 @@ export default function Notices() {
       {/* 필터 */}
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4 mb-4`}>
+          {/* 필터 헤더 (토글) */}
+          <div
+            className="flex justify-between items-center cursor-pointer"
+            onClick={() => setFilterExpanded(!filterExpanded)}
+          >
+            <h2 className={`font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>필터</h2>
+            <span className={`${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{filterExpanded ? '▲' : '▼'}</span>
+          </div>
+
+          {filterExpanded && (
+          <div className="mt-4">
           <div className="flex flex-wrap gap-3 items-center">
             {/* 소스 필터 */}
             <div className="flex items-center gap-1">
@@ -425,10 +515,11 @@ export default function Notices() {
               <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>정렬:</span>
               <select
                 value={sortBy}
-                onChange={(e) => { setSortBy(e.target.value as 'relevance' | 'date'); setPage(1); }}
+                onChange={(e) => { setSortBy(e.target.value as 'score' | 'deadline' | 'date'); setPage(1); }}
                 className={`border rounded px-3 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
               >
-                <option value="relevance">관련도순</option>
+                <option value="score">점수순</option>
+                <option value="deadline">마감임박순</option>
                 <option value="date">최신순</option>
               </select>
             </div>
@@ -561,6 +652,35 @@ export default function Notices() {
               })}
             </div>
           )}
+
+          {/* 액션 버튼 (전체 AI 평가, CSV 다운로드) */}
+          <div className={`flex flex-wrap gap-2 mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : ''}`}>
+            <button
+              onClick={handleBulkEvaluate}
+              disabled={bulkEvaluating}
+              className={`px-3 py-1 rounded text-sm font-medium ${
+                darkMode
+                  ? 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-50'
+                  : 'bg-green-500 text-white hover:bg-green-600 disabled:opacity-50'
+              }`}
+            >
+              {bulkEvaluating
+                ? `평가 중... ${bulkProgress.current}/${bulkProgress.total}`
+                : '전체 AI 평가'}
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className={`px-3 py-1 rounded text-sm font-medium ${
+                darkMode
+                  ? 'border border-gray-600 text-gray-300 hover:bg-gray-700'
+                  : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              CSV 다운로드
+            </button>
+          </div>
+          </div>
+          )}
         </div>
 
         {/* 안내 메시지 */}
@@ -576,7 +696,7 @@ export default function Notices() {
         <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow`}>
           {loading ? (
             <div className={`p-8 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>로딩 중...</div>
-          ) : displayNotices.length === 0 ? (
+          ) : sortedNotices.length === 0 ? (
             <div className={`p-8 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
               {total === 0
                 ? '공고가 없습니다.'
@@ -584,7 +704,7 @@ export default function Notices() {
             </div>
           ) : (
             <div className={`divide-y ${darkMode ? 'divide-gray-700' : ''}`}>
-              {displayNotices.map((notice) => {
+              {sortedNotices.map((notice) => {
                 const score = notice.llm_score ?? 0;
                 const dday = calculateDday(notice.end_date);
                 const ddayText = getDdayText(dday);
