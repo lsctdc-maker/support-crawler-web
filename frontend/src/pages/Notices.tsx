@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { noticeApi, crawlApi } from '../services/api';
 import { Notice, CrawlLog } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 // 로컬스토리지 키
 const EXCLUDED_URLS_KEY = 'excluded_notice_urls';
@@ -163,6 +164,13 @@ export default function Notices() {
   const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'd7' | 'd3'>('all');
   const [lastVisitTime] = useState<string | null>(() => loadLastVisit());
 
+  // 서버 제어 상태
+  const [serverStatus, setServerStatus] = useState<{
+    isRunning: boolean;
+    currentRequest?: any;
+    lastCompleted?: any;
+  }>({ isRunning: false });
+
   const fetchNotices = useCallback(async () => {
     setLoading(true);
     try {
@@ -221,11 +229,96 @@ export default function Notices() {
     }
   }, []);
 
+  // 서버 상태 조회
+  const fetchServerStatus = useCallback(async () => {
+    try {
+      // 현재 실행 중인 요청
+      const { data: running } = await supabase
+        .from('crawl_requests')
+        .select('*')
+        .eq('status', 'running')
+        .order('started_at', { ascending: false })
+        .limit(1);
+
+      // 마지막 완료된 요청
+      const { data: completed } = await supabase
+        .from('crawl_requests')
+        .select('*')
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1);
+
+      setServerStatus({
+        isRunning: running && running.length > 0,
+        currentRequest: running?.[0],
+        lastCompleted: completed?.[0]
+      });
+    } catch (err) {
+      console.error('서버 상태 조회 실패:', err);
+    }
+  }, []);
+
+  // 크롤링 요청 함수
+  const handleTriggerCrawl = async (type: 'all' | 'bizinfo' | 'agency' | 'g2b') => {
+    try {
+      // 현재 실행 중이면 차단
+      if (serverStatus.isRunning) {
+        alert('이미 크롤링이 실행 중입니다.');
+        return;
+      }
+
+      // Supabase에 크롤링 요청 INSERT
+      const { data, error } = await supabase
+        .from('crawl_requests')
+        .insert({
+          type,
+          status: 'pending',
+          requested_by: 'web_dashboard'
+        })
+        .select();
+
+      if (error) throw error;
+
+      alert(`크롤링 요청이 등록되었습니다.\n\n요청 ID: ${data[0].id}\n타입: ${type}\n\n서버가 10초 이내에 자동으로 실행합니다.`);
+
+      // 즉시 상태 새로고침
+      fetchServerStatus();
+    } catch (err: any) {
+      console.error('크롤링 요청 실패:', err);
+      alert(`크롤링 요청에 실패했습니다.\n\n오류: ${err.message}`);
+    }
+  };
+
   useEffect(() => {
     fetchNotices();
     fetchLastCrawl();
     fetchScoreStats();
-  }, [fetchNotices, fetchLastCrawl, fetchScoreStats]);
+    fetchServerStatus();
+  }, [fetchNotices, fetchLastCrawl, fetchScoreStats, fetchServerStatus]);
+
+  // 서버 상태 실시간 구독
+  useEffect(() => {
+    // Realtime 구독
+    const subscription = supabase
+      .channel('crawl_requests_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'crawl_requests'
+      }, () => {
+        fetchServerStatus();
+        fetchNotices(); // 크롤링 완료 시 공고 목록도 새로고침
+      })
+      .subscribe();
+
+    // 10초마다 폴링 (백업)
+    const interval = setInterval(fetchServerStatus, 10000);
+
+    return () => {
+      subscription.unsubscribe();
+      clearInterval(interval);
+    };
+  }, [fetchServerStatus, fetchNotices]);
 
   // 제외 목록 변경시 로컬스토리지에 저장
   useEffect(() => {
@@ -374,6 +467,104 @@ export default function Notices() {
           </div>
         </div>
       </header>
+
+      {/* 서버 제어 패널 */}
+      <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-md p-6 mb-4 border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            {/* 왼쪽: 서버 상태 표시 */}
+            <div>
+              <h3 className={`text-lg font-semibold mb-2 ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                🖥️ 크롤러 서버 제어
+              </h3>
+
+              {serverStatus.isRunning ? (
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span className="text-blue-600 font-medium">
+                    크롤링 실행 중...
+                  </span>
+                  {serverStatus.currentRequest && (
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                      (타입: {serverStatus.currentRequest.type},
+                      시작: {new Date(serverStatus.currentRequest.started_at).toLocaleTimeString('ko-KR')})
+                    </span>
+                  )}
+                </div>
+              ) : serverStatus.lastCompleted ? (
+                <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  <span>
+                    마지막 실행: {new Date(serverStatus.lastCompleted.completed_at).toLocaleString('ko-KR')}
+                  </span>
+                  {serverStatus.lastCompleted.result?.stats && (
+                    <span className="ml-3 text-green-600 font-medium">
+                      ✓ 수집: {
+                        (serverStatus.lastCompleted.result.stats.bizinfo_total || 0) +
+                        (serverStatus.lastCompleted.result.stats.g2b_total || 0) +
+                        (serverStatus.lastCompleted.result.stats.agency_total || 0)
+                      }건
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  서버 대기 중 (크롤링 기록 없음)
+                </div>
+              )}
+            </div>
+
+            {/* 오른쪽: 실행 버튼들 */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleTriggerCrawl('all')}
+                disabled={serverStatus.isRunning}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                🚀 전체 크롤링
+              </button>
+
+              <button
+                onClick={() => handleTriggerCrawl('bizinfo')}
+                disabled={serverStatus.isRunning}
+                className="px-3 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                📊 기업마당
+              </button>
+
+              <button
+                onClick={() => handleTriggerCrawl('g2b')}
+                disabled={serverStatus.isRunning}
+                className="px-3 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                🏛️ 나라장터
+              </button>
+
+              <button
+                onClick={() => handleTriggerCrawl('agency')}
+                disabled={serverStatus.isRunning}
+                className="px-3 py-2 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                🏢 기관별
+              </button>
+            </div>
+          </div>
+
+          {/* 진행률 바 (실행 중일 때만 표시) */}
+          {serverStatus.isRunning && serverStatus.currentRequest?.progress > 0 && (
+            <div className="mt-4">
+              <div className={`w-full ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} rounded-full h-2.5`}>
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                  style={{ width: `${serverStatus.currentRequest.progress}%` }}
+                ></div>
+              </div>
+              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} mt-1 text-right`}>
+                {serverStatus.currentRequest.progress}% 완료
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* 필터 */}
       <div className="max-w-7xl mx-auto px-4 py-4">
