@@ -487,14 +487,14 @@ export default function Notices() {
                   {serverStatus.currentRequest && (
                     <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                       (타입: {serverStatus.currentRequest.type},
-                      시작: {new Date(serverStatus.currentRequest.started_at).toLocaleTimeString('ko-KR')})
+                      시작: {new Date(serverStatus.currentRequest.started_at).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit' })})
                     </span>
                   )}
                 </div>
               ) : serverStatus.lastCompleted ? (
                 <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                   <span>
-                    마지막 실행: {new Date(serverStatus.lastCompleted.completed_at).toLocaleString('ko-KR')}
+                    마지막 실행: {new Date(serverStatus.lastCompleted.completed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </span>
                   {serverStatus.lastCompleted.result?.stats && (
                     <span className="ml-3 text-green-600 font-medium">
