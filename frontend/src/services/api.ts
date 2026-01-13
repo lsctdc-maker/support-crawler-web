@@ -34,8 +34,7 @@ export const noticeApi = {
       query = query.ilike('title', `%${search}%`);
     }
 
-    // AI 점수 있는 것만 조회 (llm_score NOT NULL)
-    query = query.not('llm_score', 'is', null);
+    // AI 점수 없어도 조회 (llm_score NULL 허용)
 
     // 관련도 필터 (llm_score만 사용)
     if (minRelevance > 0 && maxRelevance !== undefined) {
