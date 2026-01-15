@@ -397,6 +397,13 @@ export default function Notices() {
   // 필터링된 공고 목록
   const displayNotices = notices.filter(n => {
     if (hideExcluded && isExcluded(n.url)) return false;
+
+    // 마감 지난 공고 자동 숨김 (관심없음 숨기기 체크 시)
+    if (hideExcluded && n.end_date) {
+      const dday = calculateDday(n.end_date);
+      if (dday !== null && dday < 0) return false;
+    }
+
     if (showBookmarksOnly && !isBookmarked(n.url)) return false;
 
     // 마감 임박 필터
