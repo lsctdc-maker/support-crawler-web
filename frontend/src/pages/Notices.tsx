@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { noticeApi, crawlApi } from '../services/api';
 import { Notice, CrawlLog } from '../lib/supabase';
 import { supabase } from '../lib/supabase';
@@ -147,9 +147,6 @@ export default function Notices() {
   // AI 요약 토글 상태 (확장된 공고 ID들)
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<number>>(new Set());
 
-  // 점수별 통계
-  const [scoreStats, setScoreStats] = useState<Record<number, number>>({});
-
   // 새 기능: 북마크, 다크모드, 마감 임박 필터, 새 공고
   const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
   const [darkMode, setDarkMode] = useState(loadDarkMode);
@@ -208,16 +205,6 @@ export default function Notices() {
       }
     } catch (err) {
       console.error('수집 로그 조회 실패:', err);
-    }
-  }, []);
-
-  // 점수별 통계 조회
-  const fetchScoreStats = useCallback(async () => {
-    try {
-      const stats = await noticeApi.getScoreStats();
-      setScoreStats(stats);
-    } catch (err) {
-      console.error('점수 통계 조회 실패:', err);
     }
   }, []);
 
@@ -284,9 +271,8 @@ export default function Notices() {
   useEffect(() => {
     fetchNotices();
     fetchLastCrawl();
-    fetchScoreStats();
     fetchServerStatus();
-  }, [fetchNotices, fetchLastCrawl, fetchScoreStats, fetchServerStatus]);
+  }, [fetchNotices, fetchLastCrawl, fetchServerStatus]);
 
   // 서버 상태 실시간 구독
   useEffect(() => {
@@ -417,6 +403,21 @@ export default function Notices() {
 
     return true;
   });
+
+  // 필터링된 공고 기준 점수별 통계 (제외/마감 공고 제외)
+  const filteredScoreStats = useMemo(() => {
+    const stats: Record<number, number> = {};
+    for (let i = 0; i <= 10; i++) {
+      stats[i] = 0;
+    }
+    displayNotices.forEach(n => {
+      const score = n.llm_score ?? 0;
+      if (score >= 0 && score <= 10) {
+        stats[score]++;
+      }
+    });
+    return stats;
+  }, [displayNotices]);
 
   const totalPages = Math.ceil(total / 50);
 
@@ -681,12 +682,12 @@ export default function Notices() {
             </label>
           </div>
 
-          {/* 점수별 통계 */}
-          {Object.keys(scoreStats).length > 0 && (
+          {/* 점수별 통계 (필터링된 공고 기준) */}
+          {displayNotices.length > 0 && (
             <div className={`flex flex-wrap gap-2 mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : ''}`}>
               <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} mr-2`}>점수별:</span>
               {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map(score => {
-                const count = scoreStats[score] || 0;
+                const count = filteredScoreStats[score] || 0;
                 if (count === 0) return null;
                 return (
                   <button
