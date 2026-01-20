@@ -158,7 +158,14 @@ export default function Notices() {
     isRunning: boolean;
     currentRequest?: any;
     lastCompleted?: any;
+    lastFailed?: any;
   }>({ isRunning: false });
+
+  const [localStatus, setLocalStatus] = useState<{
+    scheduleEnabled?: boolean;
+    nextRun?: string | null;
+    error?: string;
+  }>({});
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
@@ -227,13 +234,38 @@ export default function Notices() {
         .order('completed_at', { ascending: false })
         .limit(1);
 
+      // 마지막 실패 요청
+      const { data: failed } = await supabase
+        .from('crawl_requests')
+        .select('*')
+        .eq('status', 'failed')
+        .order('completed_at', { ascending: false })
+        .limit(1);
+
       setServerStatus({
         isRunning: !!(running && running.length > 0),
         currentRequest: running?.[0],
-        lastCompleted: completed?.[0]
+        lastCompleted: completed?.[0],
+        lastFailed: failed?.[0]
       });
     } catch (err) {
       console.error('서버 상태 조회 실패:', err);
+    }
+  }, []);
+
+  const fetchLocalStatus = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/status');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      setLocalStatus({
+        scheduleEnabled: data?.schedule?.enabled,
+        nextRun: data?.schedule?.next_run ?? null
+      });
+    } catch (err: any) {
+      setLocalStatus({ error: err.message });
     }
   }, []);
 
@@ -272,7 +304,8 @@ export default function Notices() {
     fetchNotices();
     fetchLastCrawl();
     fetchServerStatus();
-  }, [fetchNotices, fetchLastCrawl, fetchServerStatus]);
+    fetchLocalStatus();
+  }, [fetchNotices, fetchLastCrawl, fetchServerStatus, fetchLocalStatus]);
 
   // 서버 상태 실시간 구독
   useEffect(() => {
@@ -291,12 +324,14 @@ export default function Notices() {
 
     // 10초마다 폴링 (백업)
     const interval = setInterval(fetchServerStatus, 10000);
+    const localInterval = setInterval(fetchLocalStatus, 30000);
 
     return () => {
       subscription.unsubscribe();
       clearInterval(interval);
+      clearInterval(localInterval);
     };
-  }, [fetchServerStatus, fetchNotices]);
+  }, [fetchServerStatus, fetchNotices, fetchLocalStatus]);
 
   // 제외 목록 변경시 로컬스토리지에 저장
   useEffect(() => {
@@ -505,12 +540,34 @@ export default function Notices() {
                       }건
                     </span>
                   )}
+                  {serverStatus.lastCompleted.result?.stats?.review_needed > 0 && (
+                    <span className="ml-3 text-orange-600 font-medium">
+                      검토 필요: {serverStatus.lastCompleted.result.stats.review_needed}건
+                    </span>
+                  )}
                 </div>
               ) : (
                 <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                   서버 대기 중 (크롤링 기록 없음)
                 </div>
               )}
+              <div className={`mt-2 text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                {localStatus.error ? (
+                  <span>로컬 서버 상태 확인 실패: {localStatus.error}</span>
+                ) : (
+                  <span>
+                    스케줄: {localStatus.scheduleEnabled ? '활성' : '비활성'} ·
+                    다음 실행: {localStatus.nextRun
+                      ? new Date(localStatus.nextRun).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : '미확인'}
+                  </span>
+                )}
+                {serverStatus.lastFailed && (
+                  <span className="ml-3 text-red-600">
+                    최근 실패: {new Date(serverStatus.lastFailed.completed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ({serverStatus.lastFailed.error || '오류'})
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* 오른쪽: 실행 버튼들 */}
@@ -742,6 +799,7 @@ export default function Notices() {
             <div className={`divide-y ${darkMode ? 'divide-gray-700' : ''}`}>
               {displayNotices.map((notice) => {
                 const score = notice.llm_score ?? 0;
+                const isReviewNeeded = notice.llm_score === null && notice.relevance >= 3 && notice.relevance <= 4;
                 const dday = calculateDday(notice.end_date);
                 const ddayText = getDdayText(dday);
                 const isNew = isNewNotice(notice);
@@ -758,6 +816,11 @@ export default function Notices() {
                           <span className={`px-2 py-1 rounded text-sm font-bold ${getScoreBgColor(score)}`}>
                             AI {score}점
                           </span>
+                          {isReviewNeeded && (
+                            <span className="px-2 py-1 rounded text-xs font-bold bg-orange-100 text-orange-700">
+                              검토 필요
+                            </span>
+                          )}
                           {ddayText && (
                             <span className={`px-2 py-1 rounded text-xs font-bold ${getDdayColor(dday)}`}>
                               {ddayText}
