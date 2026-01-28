@@ -39,23 +39,26 @@ export const noticeApi = {
     // 관련도 필터 (llm_score만 사용)
     if (minRelevance > 0 && maxRelevance !== undefined) {
       // 범위 필터 (예: 5~6점)
-      query = query.gte('llm_score', minRelevance).lte('llm_score', maxRelevance);
+      query = query.gte('relevance', minRelevance).lte('relevance', maxRelevance);
     } else if (minRelevance > 0) {
       // 최소 관련도만 필터 (예: 7점 이상)
-      query = query.gte('llm_score', minRelevance);
+      query = query.gte('relevance', minRelevance);
     } else if (maxRelevance !== undefined) {
       // 최대 관련도만 필터 (예: 4점 이하)
-      query = query.lte('llm_score', maxRelevance);
+      query = query.lte('relevance', maxRelevance);
     }
 
     // 2. 정렬
     if (sortBy === 'relevance') {
       query = query
-        .order('llm_score', { ascending: false, nullsFirst: false })
         .order('relevance', { ascending: false })
+        .order('llm_score', { ascending: false, nullsFirst: false })
+        .order('crawled_at', { ascending: false })
         .order('created_at', { ascending: false });
     } else {
-      query = query.order('created_at', { ascending: false });
+      query = query
+        .order('crawled_at', { ascending: false })
+        .order('created_at', { ascending: false });
     }
 
     // 3. 페이지네이션 마지막에 적용

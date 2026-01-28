@@ -547,7 +547,7 @@ Error: ${err.message}`);
       stats[i] = 0;
     }
     displayNotices.forEach(n => {
-      const score = n.llm_score ?? 0;
+      const score = n.llm_score ?? n.relevance ?? 0;
       if (score >= 0 && score <= 10) {
         stats[score]++;
       }
@@ -955,7 +955,7 @@ Error: ${err.message}`);
           ) : (
             <div className={`divide-y ${darkMode ? 'divide-gray-700' : ''}`}>
               {displayNotices.map((notice) => {
-                const score = notice.llm_score ?? 0;
+                const score = notice.llm_score ?? notice.relevance ?? 0;
                 const isReviewNeeded = notice.llm_score === null && notice.relevance >= 3 && notice.relevance <= 4;
                 const dday = calculateDday(notice.end_date);
                 const ddayText = getDdayText(dday);
