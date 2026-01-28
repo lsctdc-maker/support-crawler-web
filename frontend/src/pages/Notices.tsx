@@ -151,6 +151,7 @@ export default function Notices() {
   const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
   const [darkMode, setDarkMode] = useState(loadDarkMode);
   const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'd7' | 'd3'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'closed'>('open');
   const [lastVisitTime] = useState<string | null>(() => loadLastVisit());
 
   // 서버 제어 상태
@@ -166,6 +167,35 @@ export default function Notices() {
     nextRun?: string | null;
     error?: string;
   }>({});
+  const [queueStats, setQueueStats] = useState<{
+    pending: number;
+    running: number;
+    completed24h: number;
+    failed: number;
+    last24hRun: boolean;
+  }>({ pending: 0, running: 0, completed24h: 0, failed: 0, last24hRun: false });
+  const [retrying, setRetrying] = useState(false);
+
+  const progressSteps = useMemo(() => ([
+    { label: 'Bizinfo', threshold: 10 },
+    { label: 'Agency', threshold: 30 },
+    { label: 'G2B', threshold: 55 },
+    { label: 'LLM', threshold: 78 },
+    { label: 'Excel', threshold: 85 },
+    { label: 'Supabase', threshold: 90 },
+    { label: 'Done', threshold: 100 },
+  ]), []);
+
+  const classifyError = (message?: string): string => {
+    if (!message) return 'unknown';
+    const text = message.toLowerCase();
+    if (text.includes('timeout') || text.includes('timed out')) return 'timeout';
+    if (text.includes('permission') || text.includes('rls') || text.includes('auth')) return 'auth';
+    if (text.includes('connect') || text.includes('network') || text.includes('dns')) return 'network';
+    if (text.includes('supabase') || text.includes('upload')) return 'upload';
+    if (text.includes('selenium') || text.includes('webdriver') || text.includes('crawl')) return 'crawler';
+    return 'unknown';
+  };
 
   const fetchNotices = useCallback(async () => {
     setLoading(true);
@@ -269,6 +299,31 @@ export default function Notices() {
     }
   }, []);
 
+  const fetchQueueStats = useCallback(async () => {
+    try {
+      const now = new Date();
+      const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+      const [pendingRes, runningRes, failedRes, completedRes] = await Promise.all([
+        supabase.from('crawl_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('crawl_requests').select('id', { count: 'exact', head: true }).eq('status', 'running'),
+        supabase.from('crawl_requests').select('id', { count: 'exact', head: true }).eq('status', 'failed'),
+        supabase.from('crawl_requests').select('id', { count: 'exact', head: true }).eq('status', 'completed').gte('completed_at', last24h),
+      ]);
+
+      const completed24h = completedRes.count ?? 0;
+      setQueueStats({
+        pending: pendingRes.count ?? 0,
+        running: runningRes.count ?? 0,
+        failed: failedRes.count ?? 0,
+        completed24h,
+        last24hRun: completed24h > 0,
+      });
+    } catch (err) {
+      console.error('Queue stats fetch failed:', err);
+    }
+  }, []);
+
   // 크롤링 요청 함수
   const handleTriggerCrawl = async (type: 'all' | 'bizinfo' | 'agency' | 'g2b') => {
     try {
@@ -277,6 +332,17 @@ export default function Notices() {
         alert('이미 크롤링이 실행 중입니다.');
         return;
       }
+      const { data: existing } = await supabase
+        .from('crawl_requests')
+        .select('id, status')
+        .eq('type', type)
+        .in('status', ['pending', 'running'])
+        .limit(1);
+      if (existing && existing.length > 0) {
+        alert('Already queued or running for this type.');
+        return;
+      }
+
 
       // Supabase에 크롤링 요청 INSERT
       const { data, error } = await supabase
@@ -300,12 +366,42 @@ export default function Notices() {
     }
   };
 
+
+  const handleRetryFailed = async () => {
+    if (!serverStatus.lastFailed?.type || retrying) return;
+    try {
+      setRetrying(true);
+      const { data, error } = await supabase
+        .from('crawl_requests')
+        .insert({
+          type: serverStatus.lastFailed.type,
+          status: 'pending',
+          requested_by: 'web_dashboard_retry'
+        })
+        .select();
+
+      if (error) throw error;
+      alert(`Retry queued.
+Request ID: ${data[0].id}`);
+      fetchServerStatus();
+      fetchQueueStats();
+    } catch (err: any) {
+      console.error('Retry failed:', err);
+      alert(`Retry failed.
+
+Error: ${err.message}`);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   useEffect(() => {
     fetchNotices();
     fetchLastCrawl();
     fetchServerStatus();
     fetchLocalStatus();
-  }, [fetchNotices, fetchLastCrawl, fetchServerStatus, fetchLocalStatus]);
+    fetchQueueStats();
+  }, [fetchNotices, fetchLastCrawl, fetchServerStatus, fetchLocalStatus, fetchQueueStats]);
 
   // 서버 상태 실시간 구독
   useEffect(() => {
@@ -318,20 +414,23 @@ export default function Notices() {
         table: 'crawl_requests'
       }, () => {
         fetchServerStatus();
+        fetchQueueStats();
         fetchNotices(); // 크롤링 완료 시 공고 목록도 새로고침
       })
       .subscribe();
 
     // 10초마다 폴링 (백업)
     const interval = setInterval(fetchServerStatus, 10000);
+    const queueInterval = setInterval(fetchQueueStats, 15000);
     const localInterval = setInterval(fetchLocalStatus, 30000);
 
     return () => {
       subscription.unsubscribe();
       clearInterval(interval);
+      clearInterval(queueInterval);
       clearInterval(localInterval);
     };
-  }, [fetchServerStatus, fetchNotices, fetchLocalStatus]);
+  }, [fetchServerStatus, fetchNotices, fetchLocalStatus, fetchQueueStats]);
 
   // 제외 목록 변경시 로컬스토리지에 저장
   useEffect(() => {
@@ -418,11 +517,13 @@ export default function Notices() {
   // 필터링된 공고 목록
   const displayNotices = notices.filter(n => {
     if (hideExcluded && isExcluded(n.url)) return false;
-
-    // 마감 지난 공고 자동 숨김 (관심없음 숨기기 체크 시)
-    if (hideExcluded && n.end_date) {
+    if (statusFilter !== 'all') {
       const dday = calculateDday(n.end_date);
-      if (dday !== null && dday < 0) return false;
+      if (statusFilter === 'open') {
+        if (dday !== null && dday < 0) return false;
+      } else if (statusFilter === 'closed') {
+        if (dday === null || dday >= 0) return false;
+      }
     }
 
     if (showBookmarksOnly && !isBookmarked(n.url)) return false;
@@ -564,11 +665,30 @@ export default function Notices() {
                 )}
                 {serverStatus.lastFailed && (
                   <span className="ml-3 text-red-600">
-                    최근 실패: {new Date(serverStatus.lastFailed.completed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ({serverStatus.lastFailed.error || '오류'})
+                    최근 실패: {new Date(serverStatus.lastFailed.completed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} [{classifyError(serverStatus.lastFailed.error)}] ({serverStatus.lastFailed.error || 'error'})
                   </span>
                 )}
               </div>
-            </div>
+            
+              <div className={`mt-3 grid grid-cols-5 gap-2 text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <div className={`rounded px-2 py-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  Pending: {queueStats.pending}
+                </div>
+                <div className={`rounded px-2 py-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  Running: {queueStats.running}
+                </div>
+                <div className={`rounded px-2 py-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  Failed: {queueStats.failed}
+                </div>
+                <div className={`rounded px-2 py-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  Completed 24h: {queueStats.completed24h}
+                </div>
+                <div className={`rounded px-2 py-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  24h run: {queueStats.last24hRun ? 'OK' : 'No'}
+                </div>
+              </div>
+
+</div>
 
             {/* 오른쪽: 실행 버튼들 */}
             <div className="flex gap-2">
@@ -603,6 +723,15 @@ export default function Notices() {
               >
                 🏢 기관별
               </button>
+
+              <button
+                onClick={handleRetryFailed}
+                disabled={serverStatus.isRunning || !serverStatus.lastFailed || retrying}
+                className="px-3 py-2 bg-gray-700 text-white rounded-lg font-medium hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                Retry failed
+              </button>
+
             </div>
           </div>
 
@@ -618,6 +747,20 @@ export default function Notices() {
               <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} mt-1 text-right`}>
                 {serverStatus.currentRequest.progress}% 완료
               </p>
+              <div className={`mt-3 flex flex-wrap gap-2 text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                {progressSteps.map(step => {
+                  const active = (serverStatus.currentRequest?.progress ?? 0) >= step.threshold;
+                  return (
+                    <span
+                      key={step.label}
+                      className={`px-2 py-1 rounded ${active ? 'bg-blue-600 text-white' : (darkMode ? 'bg-gray-700' : 'bg-gray-200')}`}
+                    >
+                      {step.label}
+                    </span>
+                  );
+                })}
+              </div>
+
             </div>
           )}
         </div>
@@ -688,6 +831,20 @@ export default function Notices() {
                 <option value="d3">D-3 이내</option>
               </select>
             </div>
+
+            <div className="flex items-center gap-1">
+              <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Status:</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => { setStatusFilter(e.target.value as 'all' | 'open' | 'closed'); setPage(1); }}
+                className={`border rounded px-3 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
+              >
+                <option value="all">All</option>
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+
 
             {/* 검색 */}
             <div className="flex items-center gap-2 flex-1 min-w-[200px]">
