@@ -88,8 +88,15 @@ const saveDarkMode = (isDark: boolean) => {
 const calculateDday = (endDateStr: string | null): number | null => {
   if (!endDateStr) return null;
   try {
-    // 다양한 날짜 형식 파싱 시도
-    const cleaned = endDateStr.replace(/\./g, '-').replace(/[년월]/g, '-').replace(/일/g, '').trim();
+    const normalizedText = endDateStr.trim();
+    if (normalizedText.includes('??') || normalizedText.includes('??') || normalizedText.includes('???') || normalizedText.includes('????') || normalizedText.toLowerCase().includes('closed')) {
+      return -1;
+    }
+    if (normalizedText.includes('??') || normalizedText.includes('??')) {
+      return null;
+    }
+    // ??? ?? ?? ?? ??
+    const cleaned = endDateStr.replace(/\./g, '-').replace(/[??]/g, '-').replace(/?/g, '').trim();
     const endDate = new Date(cleaned);
     if (isNaN(endDate.getTime())) return null;
 
@@ -105,7 +112,6 @@ const calculateDday = (endDateStr: string | null): number | null => {
   }
 };
 
-// D-day 표시 텍스트
 const getDdayText = (dday: number | null): string | null => {
   if (dday === null) return null;
   if (dday < 0) return '마감';
