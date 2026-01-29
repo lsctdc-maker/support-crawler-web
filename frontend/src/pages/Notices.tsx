@@ -89,14 +89,23 @@ const calculateDday = (endDateStr: string | null): number | null => {
   if (!endDateStr) return null;
   try {
     const normalizedText = endDateStr.trim();
-    if (normalizedText.includes('??') || normalizedText.includes('??') || normalizedText.includes('???') || normalizedText.includes('????') || normalizedText.toLowerCase().includes('closed')) {
+    if (
+      normalizedText.includes('??') ||
+      normalizedText.includes('??') ||
+      normalizedText.includes('???') ||
+      normalizedText.includes('????') ||
+      normalizedText.toLowerCase().includes('closed')
+    ) {
       return -1;
     }
     if (normalizedText.includes('??') || normalizedText.includes('??')) {
       return null;
     }
-    // ??? ?? ?? ?? ??
-    const cleaned = endDateStr.replace(/\./g, '-').replace(/[??]/g, '-').replace(/?/g, '').trim();
+    const cleaned = endDateStr
+      .replace(/\./g, '-')
+      .replace(/[??]/g, '-')
+      .replace(/?/g, '')
+      .trim();
     const endDate = new Date(cleaned);
     if (isNaN(endDate.getTime())) return null;
 
