@@ -156,6 +156,7 @@ export default function Notices() {
   const [hideExcluded, setHideExcluded] = useState(true);
   const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
   const [scoreFilter, setScoreFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('8'); // 점수 필터 (기본: 8점)
+  const [scoreQuickFilter, setScoreQuickFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('all');
   const [sortBy, setSortBy] = useState<'relevance' | 'date'>('relevance');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
@@ -218,14 +219,17 @@ export default function Notices() {
       // 점수 필터에 따른 관련도 설정 (1점 단위)
       let minRelevance = 0;
       let maxRelevance = 10;
-      if (hideLowRelevance && scoreFilter !== 'all') {
-        const score = parseInt(scoreFilter);
-        if (scoreFilter === '4') {
-          // 4점 이하
+      const effectiveScoreFilter = scoreQuickFilter !== 'all'
+        ? scoreQuickFilter
+        : (hideLowRelevance ? scoreFilter : 'all');
+      if (effectiveScoreFilter !== 'all') {
+        const score = parseInt(effectiveScoreFilter);
+        if (effectiveScoreFilter === '4') {
+          // 4? ??
           minRelevance = 0;
           maxRelevance = 4;
         } else {
-          // 특정 점수만
+          // ?? ???
           minRelevance = score;
           maxRelevance = score;
         }
@@ -247,7 +251,7 @@ export default function Notices() {
     } finally {
       setLoading(false);
     }
-  }, [source, search, page, hideLowRelevance, scoreFilter, sortBy]);
+  }, [source, search, page, hideLowRelevance, scoreFilter, scoreQuickFilter, sortBy]);
 
   const fetchLastCrawl = useCallback(async () => {
     try {
@@ -818,7 +822,7 @@ Error: ${err.message}`);
               <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>점수:</span>
               <select
                 value={scoreFilter}
-                onChange={(e) => { setScoreFilter(e.target.value as 'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'); setPage(1); }}
+                onChange={(e) => { setScoreFilter(e.target.value as 'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'); setScoreQuickFilter('all'); setPage(1); }}
                 className={`border rounded px-3 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
                 disabled={!hideLowRelevance}
               >
@@ -922,16 +926,12 @@ Error: ${err.message}`);
                   <button
                     key={score}
                     onClick={() => {
-                      if (score <= 4) {
-                        setScoreFilter('4');
-                      } else {
-                        setScoreFilter(String(score) as '10' | '9' | '8' | '7' | '6' | '5');
-                      }
-                      setHideLowRelevance(true);
+                      const next = score <= 4 ? '4' : (String(score) as '10' | '9' | '8' | '7' | '6' | '5');
+                      setScoreQuickFilter(prev => (prev === next ? 'all' : next));
                       setPage(1);
                     }}
                     className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                      (scoreFilter === String(score) || (score <= 4 && scoreFilter === '4'))
+                      (scoreQuickFilter === String(score) || (score <= 4 && scoreQuickFilter === '4'))
                         ? 'bg-blue-600 text-white'
                         : score >= 8
                           ? 'bg-green-100 text-green-800 hover:bg-green-200'
