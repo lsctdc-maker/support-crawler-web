@@ -90,21 +90,21 @@ const calculateDday = (endDateStr: string | null): number | null => {
   try {
     const normalizedText = endDateStr.trim();
     if (
-      normalizedText.includes('??') ||
-      normalizedText.includes('??') ||
-      normalizedText.includes('???') ||
-      normalizedText.includes('????') ||
+      normalizedText.includes('마감') ||
+      normalizedText.includes('종료') ||
+      normalizedText.includes('마감됨') ||
+      normalizedText.includes('기간종료') ||
       normalizedText.toLowerCase().includes('closed')
     ) {
       return -1;
     }
-    if (normalizedText.includes('??') || normalizedText.includes('??')) {
+    if (normalizedText.includes('상시') || normalizedText.includes('수시')) {
       return null;
     }
     const cleaned = endDateStr
       .replace(/\./g, '-')
-      .replace(/[??]/g, '-')
-      .replace(/?/g, '')
+      .replace(/[년월]/g, '-')
+      .replace(/일/g, '')
       .trim();
     const endDate = new Date(cleaned);
     if (isNaN(endDate.getTime())) return null;
