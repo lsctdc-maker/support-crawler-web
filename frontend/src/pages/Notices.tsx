@@ -996,32 +996,29 @@ const filteredScoreStats = useMemo(() => {
           {displayNotices.length > 0 && (
             <div className={`flex flex-wrap gap-2 mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : ''}`}>
               <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} mr-2`}>점수별:</span>
-              {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map(score => {
+              {[10, 9, 8, 7, 6].map(score => {
                 const count = filteredScoreStats[score] || 0;
-                if (count === 0) return null;
                 return (
                   <button
                     key={score}
                     onClick={() => {
-                      const next = score <= 4 ? '4' : (String(score) as '10' | '9' | '8' | '7' | '6' | '5');
+                      const next = String(score) as '10' | '9' | '8' | '7' | '6';
                       setScoreQuickFilter(prev => (prev === next ? 'all' : next));
                       setScoreBand('all');
                       setPage(1);
                     }}
                     className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                      (scoreQuickFilter === String(score) || (score <= 4 && scoreQuickFilter === '4'))
+                      scoreQuickFilter === String(score)
                         ? 'bg-blue-600 text-white'
                         : score >= 8
                           ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                          : score >= 6
-                            ? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
                     }`}
                   >
-                    {score}점: {count}건
+                    {score}? {count}?
                   </button>
                 );
-              })}
+              })
             </div>
           )}
         </div>
