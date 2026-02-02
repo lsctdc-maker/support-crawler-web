@@ -157,6 +157,7 @@ export default function Notices() {
   const [hideLowRelevance, setHideLowRelevance] = useState(true); // 낮은 관련도 숨기기
   const [scoreFilter, setScoreFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('8'); // 점수 필터 (기본: 8점)
   const [scoreQuickFilter, setScoreQuickFilter] = useState<'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'>('all');
+  const [scoreBand, setScoreBand] = useState<'all' | 'sure' | 'review' | 'low'>('sure');
   const [sortBy, setSortBy] = useState<'relevance' | 'date'>('relevance');
   const [lastCrawl, setLastCrawl] = useState<CrawlLog | null>(null);
 
@@ -219,19 +220,29 @@ export default function Notices() {
       // 점수 필터에 따른 관련도 설정 (1점 단위)
       let minRelevance = 0;
       let maxRelevance = 10;
-      const effectiveScoreFilter = scoreQuickFilter !== 'all'
-        ? scoreQuickFilter
-        : (hideLowRelevance ? scoreFilter : 'all');
-      if (effectiveScoreFilter !== 'all') {
-        const score = parseInt(effectiveScoreFilter);
-        if (effectiveScoreFilter === '4') {
-          // 4? ??
-          minRelevance = 0;
-          maxRelevance = 4;
-        } else {
-          // ?? ???
-          minRelevance = score;
-          maxRelevance = score;
+
+      if (scoreBand === 'sure') {
+        minRelevance = 8;
+        maxRelevance = 10;
+      } else if (scoreBand === 'review') {
+        minRelevance = 5;
+        maxRelevance = 7;
+      } else if (scoreBand === 'low') {
+        minRelevance = 0;
+        maxRelevance = 4;
+      } else {
+        const effectiveScoreFilter = scoreQuickFilter !== 'all'
+          ? scoreQuickFilter
+          : (hideLowRelevance ? scoreFilter : 'all');
+        if (effectiveScoreFilter !== 'all') {
+          const score = parseInt(effectiveScoreFilter);
+          if (effectiveScoreFilter === '4') {
+            minRelevance = 0;
+            maxRelevance = 4;
+          } else {
+            minRelevance = score;
+            maxRelevance = score;
+          }
         }
       }
 
@@ -251,7 +262,7 @@ export default function Notices() {
     } finally {
       setLoading(false);
     }
-  }, [source, search, page, hideLowRelevance, scoreFilter, scoreQuickFilter, sortBy]);
+  }, [source, search, page, hideLowRelevance, scoreFilter, scoreQuickFilter, scoreBand, sortBy]);
 
   const fetchLastCrawl = useCallback(async () => {
     try {
@@ -560,7 +571,31 @@ Error: ${err.message}`);
   });
 
   // 필터링된 공고 기준 점수별 통계 (제외/마감 공고 제외)
-  const filteredScoreStats = useMemo(() => {
+  
+  const summaryStats = useMemo(() => {
+    let openCount = 0;
+    let dueSoonCount = 0;
+    let newCount = 0;
+    let reviewCount = 0;
+    displayNotices.forEach(n => {
+      const dday = calculateDday(n.end_date);
+      if (dday === null || dday >= 0) {
+        openCount += 1;
+      }
+      if (dday !== null && dday >= 0 && dday <= 7) {
+        dueSoonCount += 1;
+      }
+      if (isNewNotice(n)) {
+        newCount += 1;
+      }
+      if (n.llm_score === null && n.relevance >= 3 && n.relevance <= 4) {
+        reviewCount += 1;
+      }
+    });
+    return { openCount, dueSoonCount, newCount, reviewCount };
+  }, [displayNotices, lastVisitTime]);
+
+const filteredScoreStats = useMemo(() => {
     const stats: Record<number, number> = {};
     for (let i = 0; i <= 10; i++) {
       stats[i] = 0;
@@ -624,6 +659,48 @@ Error: ${err.message}`);
       </header>
 
       {/* 서버 제어 패널 */}
+
+      <div className="max-w-7xl mx-auto px-4 py-2">
+        <div className={`grid grid-cols-4 gap-3 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
+          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
+            <div className="text-xs uppercase tracking-wide opacity-70">Open</div>
+            <div className="text-2xl font-bold mt-1">{summaryStats.openCount}</div>
+          </div>
+          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
+            <div className="text-xs uppercase tracking-wide opacity-70">Due <=7d</div>
+            <div className="text-2xl font-bold mt-1">{summaryStats.dueSoonCount}</div>
+          </div>
+          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
+            <div className="text-xs uppercase tracking-wide opacity-70">New</div>
+            <div className="text-2xl font-bold mt-1">{summaryStats.newCount}</div>
+          </div>
+          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
+            <div className="text-xs uppercase tracking-wide opacity-70">Review</div>
+            <div className="text-2xl font-bold mt-1">{summaryStats.reviewCount}</div>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {([
+            { key: 'sure', label: 'Sure (>=8)' },
+            { key: 'review', label: 'Review (5-7)' },
+            { key: 'low', label: 'Low (<=4)' },
+            { key: 'all', label: 'All' },
+          ] as const).map(preset => (
+            <button
+              key={preset.key}
+              onClick={() => {
+                setScoreBand(preset.key);
+                setScoreQuickFilter('all');
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${scoreBand === preset.key ? 'bg-blue-600 text-white' : (darkMode ? 'bg-gray-700 text-gray-200' : 'bg-gray-200 text-gray-700')}`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-md p-6 mb-4 border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
           <div className="flex items-center justify-between">
@@ -822,7 +899,7 @@ Error: ${err.message}`);
               <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>점수:</span>
               <select
                 value={scoreFilter}
-                onChange={(e) => { setScoreFilter(e.target.value as 'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'); setScoreQuickFilter('all'); setPage(1); }}
+                onChange={(e) => { setScoreFilter(e.target.value as 'all' | '10' | '9' | '8' | '7' | '6' | '5' | '4'); setScoreQuickFilter('all'); setScoreBand('all'); setPage(1); }}
                 className={`border rounded px-3 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
                 disabled={!hideLowRelevance}
               >
@@ -928,6 +1005,7 @@ Error: ${err.message}`);
                     onClick={() => {
                       const next = score <= 4 ? '4' : (String(score) as '10' | '9' | '8' | '7' | '6' | '5');
                       setScoreQuickFilter(prev => (prev === next ? 'all' : next));
+                      setScoreBand('all');
                       setPage(1);
                     }}
                     className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
