@@ -182,6 +182,7 @@ export default function Notices() {
   const [localStatus, setLocalStatus] = useState<{
     scheduleEnabled?: boolean;
     nextRun?: string | null;
+    lastHeartbeat?: string | null;
     error?: string;
   }>({});
   const [queueStats, setQueueStats] = useState<{
@@ -315,14 +316,17 @@ export default function Notices() {
 
   const fetchLocalStatus = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/status');
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const data = await response.json();
+      const { data, error } = await supabase
+        .from('crawler_status')
+        .select('*')
+        .eq('id', 'server')
+        .single();
+
+      if (error) throw error;
       setLocalStatus({
-        scheduleEnabled: data?.schedule?.enabled,
-        nextRun: data?.schedule?.next_run ?? null
+        scheduleEnabled: data?.schedule_enabled ?? true,
+        nextRun: data?.next_run ?? null,
+        lastHeartbeat: data?.last_heartbeat ?? null,
       });
     } catch (err: any) {
       setLocalStatus({ error: err.message });
