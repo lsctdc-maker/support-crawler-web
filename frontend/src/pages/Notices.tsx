@@ -665,15 +665,15 @@ const filteredScoreStats = useMemo(() => {
       {/* 서버 제어 패널 */}
 
       <div className="max-w-7xl mx-auto px-4 py-2">
-        <div className={`grid grid-cols-4 gap-3 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
-          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
-            <div className="text-xs uppercase tracking-wide opacity-70">Open</div>
-            <div className="text-2xl font-bold mt-1">{summaryStats.openCount}</div>
-          </div>
-          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
-            <div className="text-xs uppercase tracking-wide opacity-70">Due <=7d</div>
-            <div className="text-2xl font-bold mt-1">{summaryStats.dueSoonCount}</div>
-          </div>
+          <div className={`grid grid-cols-4 gap-3 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
+            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
+              <div className="text-xs uppercase tracking-wide opacity-70">Open</div>
+              <div className="text-2xl font-bold mt-1">{summaryStats.openCount}</div>
+            </div>
+            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
+              <div className="text-xs uppercase tracking-wide opacity-70">Due ≤7d</div>
+              <div className="text-2xl font-bold mt-1">{summaryStats.dueSoonCount}</div>
+            </div>
           <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow p-4`}>
             <div className="text-xs uppercase tracking-wide opacity-70">New</div>
             <div className="text-2xl font-bold mt-1">{summaryStats.newCount}</div>
@@ -1019,10 +1019,10 @@ const filteredScoreStats = useMemo(() => {
                           : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
                     }`}
                   >
-                    {score}? {count}?
+                    {score}점 {count}건
                   </button>
                 );
-              })
+              })}
             </div>
           )}
         </div>
